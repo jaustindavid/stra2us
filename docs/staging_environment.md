@@ -42,7 +42,7 @@ iot.stra2us.austindavid.com ── A ──┐       iot-staging.stra2us.austind
                   ▲                                                  ▲
                   │ HTTPS, port 443                                  │ HTTPS, port 443
                   │                                                  │
-stra2us.austindavid.com ── CNAME ─┘                staging.stra2us.austindavid.com ── CNAME ┘
+stra2us.austindavid.com ── CNAME ─┘                stra2us-staging.austindavid.com ── CNAME ┘
                   ▲                                                  ▲
                   │                                                  │
               Browsers                                           Browsers (testing)
@@ -58,7 +58,7 @@ get their own default network).
 Hostnames:
 - `stra2us.austindavid.com` — prod browser path (CF tunnel A).
 - `iot.stra2us.austindavid.com` — prod device path (A record, :8153).
-- `staging.stra2us.austindavid.com` — staging browser path (CF tunnel B).
+- `stra2us-staging.austindavid.com` — staging browser path (CF tunnel B).
 - `iot-staging.stra2us.austindavid.com` — staging device path
   (A record to same public IP, :8253).
 
@@ -265,7 +265,7 @@ with the right env-var overrides:
 ```sh
 # inside tools/stage smoke
 ( set -a && source .env.staging && \
-  STRA2US_BROWSER_HOST=staging.stra2us.austindavid.com \
+  STRA2US_BROWSER_HOST=stra2us-staging.austindavid.com \
   STRA2US_DEVICE_HOST=iot-staging.stra2us.austindavid.com \
   STRA2US_DEVICE_PORT=8253 \
   tools/smoke_test.sh )
@@ -313,7 +313,7 @@ At minimum, three seeded identities:
 |---|---|---|---|
 | `smoke` | htpasswd + `admin_acls:smoke` with `*:rw` | smoke-test client | The smoke test's activity-log heartbeat check needs an account that can read the full log. Wildcard ACL. |
 | `admin` | htpasswd + `admin_acls:admin` with `*:rw` | manual rescue / superuser | The htpasswd rescue path on `iot-staging...:8253/admin/` needs a working superuser. Wildcard ACL. |
-| One Google email | OAuth + `admin_acls:<email>` with `*:rw` | end-to-end OAuth testing | Lets the operator sign in via the OAuth flow on `staging.stra2us.austindavid.com` and exercise the full authenticated UI. |
+| One Google email | OAuth + `admin_acls:<email>` with `*:rw` | end-to-end OAuth testing | Lets the operator sign in via the OAuth flow on `stra2us-staging.austindavid.com` and exercise the full authenticated UI. |
 
 Seeded once at staging bring-up (a `tools/stage seed-users` subcommand,
 or baked into `tools/stage up` first-time logic). Idempotent — re-running

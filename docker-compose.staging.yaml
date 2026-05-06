@@ -42,12 +42,12 @@ services:
       - STRA2US_GOOGLE_OAUTH_ENABLED=1
       - STRA2US_GOOGLE_CLIENT_ID=${STRA2US_GOOGLE_CLIENT_ID}
       - STRA2US_GOOGLE_CLIENT_SECRET=${STRA2US_GOOGLE_CLIENT_SECRET}
-      - STRA2US_OAUTH_REDIRECT_URI=https://staging.stra2us.austindavid.com/oauth/google/callback
+      - STRA2US_OAUTH_REDIRECT_URI=https://stra2us-staging.austindavid.com/oauth/google/callback
       # Tells the auth middleware which hostname is the OAuth-redirect
-      # path on this stack. Browser-host on staging is the staging CF
-      # hostname; everything else (incl. iot-staging:8253) gets
-      # htpasswd. Mirror of how prod's BROWSER_HOST works.
-      - STRA2US_BROWSER_HOST=staging.stra2us.austindavid.com
+      # path on this stack. One-level subdomain (not staging.stra2us..)
+      # so the CF Universal SSL wildcard *.austindavid.com covers it
+      # without needing paid Advanced Certificate Manager.
+      - STRA2US_BROWSER_HOST=stra2us-staging.austindavid.com
     restart: unless-stopped
 
   cloudflared-staging:

@@ -34,7 +34,7 @@ STAGING_TUNNEL_SERVICE="cloudflared-staging"
 
 # Hostnames the smoke test should target on staging. Per
 # docs/staging_environment.md.
-STAGING_BROWSER_HOST="staging.stra2us.austindavid.com"
+STAGING_BROWSER_HOST="stra2us-staging.austindavid.com"
 STAGING_DEVICE_HOST="iot-staging.stra2us.austindavid.com"
 STAGING_DEVICE_PORT="8253"
 
