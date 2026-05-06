@@ -469,28 +469,124 @@ async function fetchAdminUsers() {
     const { ok, data } = await fetchAPI('/admin_users');
     const tbody = document.getElementById('adminUsersTableBody');
     if (!ok) {
-        tbody.innerHTML = `<tr><td colspan="4" class="text-muted">Failed to load (HTTP error).</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="5" class="text-muted">Failed to load (HTTP error).</td></tr>`;
         return;
     }
     _adminUsersById = {};
     data.forEach(u => { _adminUsersById[u.username] = u; });
 
+    // Server returns sorted alphabetically; sort defensively in case
+    // older endpoints don't.
     const rows = [...data].sort((a, b) => a.username.localeCompare(b.username));
     tbody.innerHTML = rows.map(u => {
         const uname = escapeHtml(u.username);
+        const source = renderSourceBadge(u.source);
         const status = u.provisioned
             ? '<span class="badge" style="background:rgba(0,255,136,0.12);color:var(--accent-success);border:1px solid rgba(0,255,136,0.3);">provisioned</span>'
             : '<span class="badge" style="background:rgba(255,170,0,0.12);color:#ffaa00;border:1px solid rgba(255,170,0,0.3);" title="No ACL row in Redis — this user sees no KV. Run migrate_admin_acls.py or edit here.">needs setup</span>';
+        // Delete is only meaningful for OAuth/acl-only users — the
+        // operation removes their admin_acls row. For htpasswd users,
+        // deleting the ACL row leaves them able to authenticate but
+        // with deny-all (rescue users still get the wildcard via
+        // RESCUE_USERS, others get nothing). Show the button for OAuth
+        // users only to avoid foot-shooting; htpasswd ACL clearing is
+        // a deliberate operator action via redis-cli if ever needed.
+        const deleteBtn = (u.source === 'oauth' || u.source === 'acl-only')
+            ? `<button class="btn-sm btn-danger" onclick="confirmDeleteAdminUser('${uname}')">Delete</button>`
+            : '';
         return `
             <tr>
                 <td><strong>${uname}</strong></td>
+                <td>${source}</td>
                 <td>${formatAclSummary(u.acl)}</td>
                 <td>${status}</td>
-                <td><button class="btn-sm" onclick="openAdminAclModalFor('${uname}')">Edit ACL</button></td>
+                <td>
+                    <button class="btn-sm" onclick="openAdminAclModalFor('${uname}')">Edit ACL</button>
+                    ${deleteBtn}
+                </td>
             </tr>
         `;
-    }).join('') || '<tr><td colspan="4" class="text-muted">No admin users in htpasswd.</td></tr>';
+    }).join('') || '<tr><td colspan="5" class="text-muted">No admin users found.</td></tr>';
 }
+
+function renderSourceBadge(source) {
+    // OAuth = blue (sign-in via Google on browser hostname).
+    // htpasswd = purple (Basic auth on device hostname / rescue).
+    // acl-only = orange (no auth path — orphaned row, clean up).
+    switch (source) {
+        case 'oauth':
+            return '<span class="badge" style="background:rgba(0,240,255,0.12);color:var(--accent-blue);border:1px solid rgba(0,240,255,0.3);" title="Signs in via Google OAuth on the browser hostname">OAuth</span>';
+        case 'htpasswd':
+            return '<span class="badge" style="background:rgba(138,43,226,0.18);color:#c79bff;border:1px solid rgba(138,43,226,0.3);" title="Signs in via Basic auth on the device hostname (rescue path)">htpasswd</span>';
+        case 'acl-only':
+        default:
+            return '<span class="badge" style="background:rgba(255,170,0,0.12);color:#ffaa00;border:1px solid rgba(255,170,0,0.3);" title="ACL row exists but no auth path — likely orphaned. Delete or add to htpasswd / OAuth.">acl-only</span>';
+    }
+}
+
+async function addOauthAdmin() {
+    const input = document.getElementById('newOauthAdminEmail');
+    const email = (input.value || '').trim();
+    if (!email) {
+        alert('Enter an email address.');
+        input.focus();
+        return;
+    }
+    if (!email.includes('@') || !email.includes('.')) {
+        alert('Doesn\'t look like an email — check spelling.');
+        input.focus();
+        return;
+    }
+    if (_adminUsersById[email]) {
+        alert(`'${email}' already exists in the table — use Edit ACL to change permissions.`);
+        return;
+    }
+    // Create the row by setting an initial ACL. Default: empty
+    // permissions (deny-all). Operator opens the ACL editor next to
+    // grant. Could pre-populate with a wildcard, but that's a
+    // dangerous default — explicit is safer.
+    const initialAcl = { permissions: [] };
+    const { ok, data } = await fetchAPI(
+        `/admin_users/${encodeURIComponent(email)}/acl`,
+        'PUT',
+        initialAcl,
+    );
+    if (!ok) {
+        alert(`Failed: ${(data && data.detail) || 'unknown error'}`);
+        return;
+    }
+    input.value = '';
+    await fetchAdminUsers();
+    // Open the ACL editor immediately so the operator can grant
+    // permissions — the user is otherwise sitting in deny-all.
+    openAdminAclModalFor(email);
+}
+
+async function confirmDeleteAdminUser(username) {
+    if (!confirm(`Delete the ACL row for '${username}'?\n\n` +
+                 `This revokes their permissions immediately. ` +
+                 `If they're an OAuth user, their next sign-in attempt ` +
+                 `will land on the unauthorized page.`)) {
+        return;
+    }
+    const { ok, data } = await fetchAPI(
+        `/admin_users/${encodeURIComponent(username)}/acl`,
+        'DELETE',
+    );
+    if (!ok) {
+        alert(`Failed to delete: ${(data && data.detail) || 'unknown error'}`);
+        return;
+    }
+    await fetchAdminUsers();
+}
+
+document.getElementById('addOauthAdminBtn').addEventListener('click', addOauthAdmin);
+document.getElementById('newOauthAdminEmail').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+        e.preventDefault();
+        addOauthAdmin();
+    }
+});
 
 // 2b. Catalogs (M3a — read-only)
 // Reads published catalog YAMLs out of /kv/_catalog/* via the admin

@@ -228,13 +228,37 @@ def _read_htpasswd_users() -> List[str]:
 
 @router.get("/admin_users")
 async def list_admin_users(_: dict = Depends(require_admin_superuser)):
-    """Return every admin account known to htpasswd, with its ACL record
-    if present. Users without a Redis ACL row are surfaced with an empty
-    permissions list so the UI can flag them ("needs provisioning")."""
+    """Return every known admin identity:
+
+    - **htpasswd users** (e.g. `rescue`, `smoke`) — authenticate via
+      Basic Auth on the device hostname. May or may not have an ACL
+      row in Redis (rescue gets a hardcoded wildcard via RESCUE_USERS
+      regardless).
+    - **OAuth identities** (e.g. `austindavid@gmail.com`) — authenticate
+      via Google on the browser hostname. Live only as
+      `admin_acls:<email>` Redis rows; not in htpasswd.
+
+    Each entry tagged with `source` so the UI can distinguish.
+    Pre-v1.5 versions of this endpoint enumerated only htpasswd —
+    OAuth identities were invisible. Phase 5 fixed that.
+    """
     redis = get_redis_client()
-    users = _read_htpasswd_users()
+    htpasswd_users = set(_read_htpasswd_users())
+
+    # Find every admin_acls:* row. KEYS is fine here — the namespace
+    # is small (handful of admin identities) and this endpoint is
+    # rare (admin UI page load).
+    acl_keys = await redis.keys("admin_acls:*")
+    acl_users = set()
+    for k in acl_keys:
+        if isinstance(k, bytes):
+            k = k.decode("utf-8")
+        # Strip the "admin_acls:" prefix.
+        acl_users.add(k[len("admin_acls:"):])
+
     out = []
-    for user in users:
+    for user in sorted(htpasswd_users | acl_users):
+        in_htpasswd = user in htpasswd_users
         raw = await redis.get(ADMIN_ACL_KEY_FMT.format(user=user))
         if raw:
             try:
@@ -242,25 +266,65 @@ async def list_admin_users(_: dict = Depends(require_admin_superuser)):
                 provisioned = True
             except ValueError:
                 acl = {"permissions": []}
-                provisioned = True  # row exists but is corrupt — treat as provisioned+broken
+                provisioned = True  # row exists but is corrupt
         else:
             acl = {"permissions": []}
             provisioned = False
-        out.append({"username": user, "acl": acl, "provisioned": provisioned})
+
+        # Source heuristic: presence of `@` in the username distinguishes
+        # OAuth (Google email) identities from htpasswd-style usernames.
+        # Imperfect (a non-OAuth account could in principle contain @),
+        # but matches reality for our deployments.
+        if in_htpasswd:
+            source = "htpasswd"
+        elif "@" in user:
+            source = "oauth"
+        else:
+            source = "acl-only"  # orphaned ACL row, no auth path
+
+        out.append({
+            "username": user,
+            "source": source,
+            "acl": acl,
+            "provisioned": provisioned,
+        })
     return out
 
 
 @router.put("/admin_users/{username}/acl")
 async def update_admin_user_acl(username: str, acl_update: AclUpdate, _: dict = Depends(require_admin_superuser)):
-    """Create or replace the Redis ACL row for an admin user. 404 if the
-    username isn't in htpasswd — UI shouldn't be able to grant permissions
-    to a non-existent account."""
-    if username not in _read_htpasswd_users():
-        raise HTTPException(status_code=404, detail="Admin user not found in htpasswd")
+    """Create or replace the Redis ACL row for an admin user.
+
+    Username can be an htpasswd entry (rescue, smoke, ...) OR an
+    OAuth email — the ACL row is just a Redis key, no underlying
+    account record required. Pre-v1.5 this endpoint 404'd unless the
+    user existed in htpasswd; that gate excluded OAuth identities
+    from being granted permissions through the UI. Phase 5 dropped
+    the gate. Spelling errors are now the operator's responsibility
+    (see DELETE below for cleaning up orphan rows).
+    """
+    if not username.strip():
+        raise HTTPException(status_code=400, detail="username is required")
     redis = get_redis_client()
     acl = {"permissions": [p.dict() for p in acl_update.permissions]}
     await redis.set(ADMIN_ACL_KEY_FMT.format(user=username), json.dumps(acl))
     return {"status": "ok", "username": username, "acl": acl}
+
+
+@router.delete("/admin_users/{username}/acl")
+async def delete_admin_user_acl(username: str, _: dict = Depends(require_admin_superuser)):
+    """Remove an admin user's ACL row. Useful for revoking an OAuth
+    identity (deletes their permissions immediately; their next
+    request gets the empty-permissions deny-all path) and for
+    cleaning up orphaned admin_acls rows from typos.
+
+    Does NOT touch htpasswd — operator manages that via
+    `create_admin.py` out-of-band. After deleting an OAuth user's
+    ACL row, the user can still complete the OAuth flow but lands
+    on the unauthorized landing page."""
+    redis = get_redis_client()
+    deleted = await redis.delete(ADMIN_ACL_KEY_FMT.format(user=username))
+    return {"status": "ok", "username": username, "deleted": bool(deleted)}
 
 
 @router.get("/security_warnings")

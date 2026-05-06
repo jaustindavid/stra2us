@@ -197,11 +197,18 @@
             <section id="admin_users" class="view">
                 <header>
                     <h1>Admin Users</h1>
-                    <p class="subtitle">Browser sessions are now subject to the same ACL system as HMAC clients. Passwords still live in <code>admin.htpasswd</code> (edit via <code>create_admin.py</code>); ACLs live in Redis and are edited here.</p>
+                    <p class="subtitle">Two ways an admin can sign in: <strong>OAuth</strong> (Google, browser hostname) or <strong>htpasswd</strong> (Basic auth, device-hostname rescue path). Both share the same ACL system, edited here.</p>
                 </header>
 
                 <div class="card glass-panel form-card">
-                    <p class="form-hint">Users without a provisioned ACL row see no KV. Run <code>python migrate_admin_acls.py</code> on the server to seed defaults, or grant here row-by-row.</p>
+                    <h3>Add OAuth admin</h3>
+                    <p class="form-hint">Grant permissions to a Google identity. The user can then sign in via Google at the browser hostname. (htpasswd users are added via <code>create_admin.py</code> on the host.)</p>
+                    <div class="form-row">
+                        <input type="email" id="newOauthAdminEmail"
+                               placeholder="user@example.com"
+                               class="form-input">
+                        <button class="btn-primary" id="addOauthAdminBtn">Add</button>
+                    </div>
                 </div>
 
                 <div class="card transparent-card">
@@ -210,6 +217,7 @@
                         <thead>
                             <tr>
                                 <th>Username</th>
+                                <th>Source</th>
                                 <th>Permissions</th>
                                 <th>Status</th>
                                 <th>Actions</th>
