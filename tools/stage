@@ -17,6 +17,8 @@
 #   wait-tunnel          Poll cloudflared logs until 4 connections register
 #   smoke                Run smoke test against staging hostnames
 #   seed-users           Provision the smoke + admin + OAuth seed users (idempotent)
+#   deploy [ref]         git pull (or checkout <ref>), rebuild image,
+#                        restart stack, wait for tunnel
 #   help                 Print this message
 
 set -u
@@ -136,6 +138,31 @@ cmd_smoke() {
     )
 }
 
+cmd_deploy() {
+    require_env_file
+    local ref="${1:-}"
+
+    if [[ -n "$ref" ]]; then
+        echo "→ git fetch && checkout -B staging-current $ref"
+        git fetch
+        git checkout -B staging-current "$ref"
+    else
+        echo "→ git pull on current branch ($(git rev-parse --abbrev-ref HEAD))"
+        git pull --ff-only
+    fi
+
+    echo
+    echo "→ rebuilding image and restarting stack"
+    dcs up -d --build
+
+    echo
+    cmd_wait_tunnel || return 1
+
+    echo
+    echo "Deploy complete. Verify with smoke (from a LAN dev box, not this host):"
+    echo "    tools/stage smoke    # see TODO — host-side smoke is currently broken"
+}
+
 cmd_seed_users() {
     require_env_file
     echo "→ seeding staging users (idempotent)"
@@ -185,6 +212,7 @@ case "$1" in
     wait-tunnel)   shift; cmd_wait_tunnel "$@" ;;
     smoke)         shift; cmd_smoke "$@" ;;
     seed-users)    shift; cmd_seed_users "$@" ;;
+    deploy)        shift; cmd_deploy "$@" ;;
     help|-h|--help) cmd_help ;;
     *)             err "unknown subcommand: $1"; cmd_help; exit 1 ;;
 esac
