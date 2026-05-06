@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Austin David — PolyForm Noncommercial 1.0.0
+# See LICENSE in the repo root.
 """Live tests for `/api/admin/me` — the identity-and-scope endpoint.
 
 `/me` is load-bearing for both /admin (nav gating) and /app/<app>/<device>

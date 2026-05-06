@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Austin David — PolyForm Noncommercial 1.0.0
+# See LICENSE in the repo root.
 from fastapi import APIRouter, HTTPException, Query, Request, Depends
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel

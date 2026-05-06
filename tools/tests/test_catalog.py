@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Austin David — PolyForm Noncommercial 1.0.0
+# See LICENSE in the repo root.
 """Tests for the catalog schema + coercion.
 
 No network, no files beyond what pytest's tmp_path fixture creates.

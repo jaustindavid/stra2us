@@ -2,17 +2,10 @@
 
 ## Near-term
 
-- **Bypass Cloudflare cache for `/admin/*` assets.** CF tunnel paths
-  cache static assets at the edge by default. Means every UI deploy
-  (new app.js, styles.css, index.html) shows stale content in the
-  browser until the edge cache expires or is manually purged. Cost
-  ~30 minutes during the v1.5.1 promote chasing "why isn't the
-  banner showing" before realizing the container was serving fresh
-  but CF was returning cached. Set up a CF Cache Rule (or Page Rule)
-  on the `austindavid.com` zone that bypasses cache for
-  `stra2us.austindavid.com/admin/*` (and the staging equivalent).
-  The admin UI is dynamic enough that edge caching offers little
-  value and a lot of confusion.
+- ~~**Bypass Cloudflare cache for `/admin/*` assets.**~~ Landed
+  2026-05-06: CF Cache Rule on the austindavid.com zone with
+  expression `http.host contains "stra2us" and starts_with(http.request.uri.path, "/admin/")`
+  → bypass cache. Verified `cf-cache-status: DYNAMIC` afterward.
 
 - ~~**Make seed/bootstrap idempotent.**~~ Both halves landed
   2026-05-06: `bootstrap-host.sh::seed_htpasswd` merges per-user
@@ -72,53 +65,36 @@
   short-term, not OK long-term — the closer to prod the verifier
   runs, the better the signal.
 
-- **Revisit top-level README for freestanding-repo visibility.** The
-  README is now front-and-center on the GitHub repo page. The
-  current structure was inherited from the monorepo and emphasizes
-  feature/architecture detail. For a fresh visitor it should lead
-  with: what this is, who it's for, a one-paragraph "what does it
-  do," then "how to deploy" (which is now correct). Consider
-  whether the C++ SDK + CLI client sections belong here or in their
-  own docs. Lower priority — the README is functionally correct as
-  of today's edits.
+- ~~**Revisit top-level README for freestanding-repo visibility.**~~
+  Trimmed 2026-05-06: license + status notes added near top, long
+  C++ SDK + CLI sections collapsed into pointers to
+  `docs/client_spec.md` and `tools/README.md`, changelog trimmed to
+  most-recent + pointer to git log + FR docs. README went from 401
+  lines to 311.
 
-- **Rewrite `docs/admin_auth_architecture.md` to reflect post-v1.5
-  reality.** Currently describes only the htpasswd + session-cookie
-  flow and explicitly says the project operates "without bloated
-  system dependencies like OAuth OIDC wrappers" — both untrue
-  post-v1.5. Should now cover: hostname-aware middleware (browser
-  host → OAuth, device host → htpasswd rescue), the `next=`
-  round-trip cookie, OAuth callback issuing the same `admin_session`
-  cookie that htpasswd does. Cross-reference
-  `fr_v15_incremental.md` for phase context.
+- ~~**Rewrite `docs/admin_auth_architecture.md` to reflect post-v1.5
+  reality.**~~ Done 2026-05-06: full rewrite covering both auth
+  paths (OAuth on browser host, htpasswd on device host),
+  middleware logic, RESCUE_USERS pattern, bootstrap-default
+  rescue password mechanism, logout flow, what's gated vs public.
 
-- **Rename `docs/staging.md` to clarify scope.** The file is
-  about *local-host* bring-up for running the live test suite, not
-  about the docker-based staging environment (which is in
-  `docs/staging_environment.md`). The shared name is confusing.
-  Suggested rename: `docs/local_dev.md` or `docs/host_dev_runtime.md`.
+- ~~**Rename `docs/staging.md` to clarify scope.**~~ Renamed to
+  `docs/local_dev.md` 2026-05-06; reference in README updated;
+  file's own header updated to disambiguate from
+  `docs/staging_environment.md`.
 
-- **Audit `docs/fr_v15_auth.md` against shipped reality.** The
-  original auth FR was written before implementation; some
-  decisions changed during the rebuild (host naming, redirect URI
-  shape, middleware structure). Either annotate sections that
-  diverge with "see fr_v15_incremental.md for as-shipped" or do a
-  cleanup pass to align.
+- ~~**Audit `docs/fr_v15_auth.md` against shipped reality.**~~
+  Done 2026-05-06: prepended a "superseded by
+  fr_v15_incremental.md" status block listing the major
+  divergences (hostname naming, rescue path mechanism, staging
+  environment, phased rollout discipline). Body preserved as
+  historical record.
 
-- **Add copyright/license header to source files.** The repo has a
-  LICENSE file (PolyForm Noncommercial 1.0.0) but individual source
-  files lack a copyright/license notice. Add a one-line header to
-  each authored source file (Python, JS, Bash). Suggested form:
-  ```
-  # Copyright (c) 2026 Austin David — PolyForm Noncommercial 1.0.0
-  # See LICENSE in the repo root.
-  ```
-  (`//` for JS, `#` for Python/Bash.) Mechanical pass — a small
-  script that detects the right comment style by extension and
-  inserts at line 1 (or after the shebang) is the easiest path.
-  Skip vendored / third-party files (none today, but check).
-  Not load-bearing for the license itself; helps anyone reading a
-  single file see the terms without hunting for LICENSE.
+- ~~**Add copyright/license header to source files.**~~ Done
+  2026-05-06: 32 files (Python, JS, Bash) updated with
+  `# Copyright (c) 2026 Austin David — PolyForm Noncommercial 1.0.0`
+  header. Shebangs preserved; syntax-checked; bootstrap-seed test
+  still 8/8 green.
 
 - **Automate pre-build / external-file staging.** The backend
   container today depends on hand-built artifacts that exist on the
@@ -170,18 +146,12 @@
   Worth doing before Phase 5 (provisioning UI), since that work will
   also have to think about scoped-admin views.
 
-- **Add an admin logout endpoint.** Today there's no way to sign
-  out of either auth path. To clear an htpasswd session you have to
-  delete the cookie AND fully quit Chrome (Basic Auth creds are
-  cached per browser process); to clear an OAuth session you have
-  to clear cookies and the 7-day `admin_session` cookie. Both make
-  testing auth flows painful — discovered during Phase 4 verification.
-  Build `GET /admin/logout`: clears `admin_session`, `oauth_state`,
-  `oauth_redirect_to` cookies; returns a `WWW-Authenticate: Basic
-  realm="logged-out"` response with a different realm string than
-  the live one (Chrome treats different realms as different
-  credential namespaces, busting the Basic Auth cache); add a small
-  "Sign out" link in the admin UI header. ~15-30 lines total.
+- ~~**Add an admin logout endpoint.**~~ Landed 2026-05-06 as v1.5.3:
+  `GET /admin/logout` (carved out of admin auth gating), Sign out
+  link in the sidebar footer. Hostname-aware response — 200 + clean
+  HTML page on the OAuth path, 401 + `realm="logged-out"` on the
+  device path (the realm change busts Chrome's Basic Auth cache,
+  which is otherwise un-clearable without quitting the browser).
 
 - **`tools/stage nuke` — reset staging Redis + re-seed.** Today
   staging Redis state persists across deploys (intentional —

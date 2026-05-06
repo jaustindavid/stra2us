@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Austin David — PolyForm Noncommercial 1.0.0
+# See LICENSE in the repo root.
 """Live round-trip test for `catalog publish` + `catalog fetch`.
 
 Skipped unless a local stra2us is reachable. Expects env:

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 Austin David — PolyForm Noncommercial 1.0.0
+# See LICENSE in the repo root.
 # Functional smoke test for the stra2us deployment. Validates that
 # device traffic, admin auth, and OAuth routes behave as expected.
 #

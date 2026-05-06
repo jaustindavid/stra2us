@@ -1,4 +1,6 @@
 #!/bin/bash
+# Copyright (c) 2026 Austin David — PolyForm Noncommercial 1.0.0
+# See LICENSE in the repo root.
 
 # This script must be SOURCED: source session.sh
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

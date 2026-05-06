@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Austin David — PolyForm Noncommercial 1.0.0
+# See LICENSE in the repo root.
 """Unit tests for the KV-value HMAC-keystream cipher.
 
 No network, no server. Pins the wire format so server and CLI can't

@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Austin David — PolyForm Noncommercial 1.0.0
+# See LICENSE in the repo root.
 """Live roundtrip tests for per-key encrypted KV values.
 
 Skipped unless a local stra2us is reachable — same env contract as

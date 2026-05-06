@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Austin David — PolyForm Noncommercial 1.0.0
+# See LICENSE in the repo root.
 """Google OAuth helpers — token exchange, ID token validation,
 state-token CSRF defense, redirect-back tracking.
 

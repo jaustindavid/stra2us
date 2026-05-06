@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Austin David — PolyForm Noncommercial 1.0.0
+# See LICENSE in the repo root.
 """Live tests for `POST /api/admin/provision_device` — the one-shot
 device-provisioning endpoint that mints an HMAC client + grants the
 customer-shaped ACL in one call.

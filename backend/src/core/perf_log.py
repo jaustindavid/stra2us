@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Austin David — PolyForm Noncommercial 1.0.0
+# See LICENSE in the repo root.
 """Lightweight perf logging — slow requests get one XADD to system:perf_log.
 
 The middleware in main.py records every request's total wall time and writes

@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Austin David — PolyForm Noncommercial 1.0.0
+# See LICENSE in the repo root.
 """Live tests for the admin `/api/admin/kv/{key}` POST encrypted-flag plumbing.
 
 The device-side path (`POST /kv/{key}` with `X-Encrypted: 1`) is covered

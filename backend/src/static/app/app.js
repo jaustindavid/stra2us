@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Austin David — PolyForm Noncommercial 1.0.0
+// See LICENSE in the repo root.
 // Customer-facing /app/ surface. One JS file serves both the landing
 // form (no nav, just lookup) and the per-device page (read-only
 // settings + future telemetry tail). Each page bootstraps based on

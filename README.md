@@ -5,6 +5,16 @@ relay designed for resource-constrained devices (ESP32, Particle Photon
 2, and similar). It features an async Python/Redis backend, a
 zero-malloc C++ client SDK, and a browser-based admin dashboard.
 
+> **License:** [PolyForm Noncommercial 1.0.0](LICENSE) — source-available
+> for noncommercial use; reselling or commercial use requires explicit
+> permission. Personal projects, research, education, hobby use → fine.
+
+> **Status:** Production-shipped (v1.5.x). The deploy pipeline is dev →
+> staging → prod via `tools/stage`; see [Deploying](#deploying) below.
+> The discipline that produced this iteration is captured in
+> [Rules of Operation](#rules-of-operation) and
+> [`docs/fr_v15_incremental.md`](docs/fr_v15_incremental.md).
+
 ## Design Architecture
 
 - **Stateless Backend:** Zero in-process state — everything lives in
@@ -181,10 +191,8 @@ copy from `admin.htpasswd.default` into `admin.htpasswd` instead.
 ### Local development (no docker)
 
 For running tests against a host-side backend (no docker), see
-[`docs/staging.md`](docs/staging.md) — covers the bring-up dance
-for `tools/tests/test_*_live.py`. (That file's name is a holdover
-from before the docker-based staging environment existed; it's
-about local dev, not the staging stack.)
+[`docs/local_dev.md`](docs/local_dev.md) — covers the bring-up
+dance for `tools/tests/test_*_live.py`.
 
 ---
 
@@ -216,92 +224,41 @@ MessagePack automatically).
 
 ---
 
-## C++ Client SDK (v2.0.0)
+## Clients
 
-> **Breaking change from v1.x:** All methods now return `int` (HTTP
-> status code) instead of `bool`. Check `result == 200` instead of
-> `if (result)`.
+### C++ SDK (devices)
 
-### Include
-
-```cpp
-#include "IoTClient.h"
-
-WiFiClient wifiClient;
-IoTClient iotClient(
-    wifiClient, "192.168.1.100", 8000, "my-device", "hex-secret");
-iotClient.setTimeFunction([]() { return (uint32_t)time(nullptr); });
-```
-
-### Publish (MessagePack)
+Zero-malloc C++ client for ESP32 / Particle Photon 2 / Arduino. All
+methods return `int` (HTTP status code; check `result == 200`). One-line
+publish for raw strings; the server wraps them in MessagePack
+automatically.
 
 ```cpp
-uint8_t buf[64];
-// ... pack data into buf using cmp ...
-int status = iotClient.publishQueue("sensors/temp", buf, sizeof(buf));
-if (status == 200) Serial.println("OK");
+IoTClient iot(wifiClient, "host", 8153, "client-id", "hex-secret");
+int status = iot.publishQueue("device/status", "heartbeat");
 ```
 
-### Publish (Raw String — no MessagePack library needed)
+Full API + the wire-format details every client must implement (HMAC
+signing, response verification, msgpack value shapes, encrypted-value
+ext family, etc.) are in
+[**`docs/client_spec.md`**](docs/client_spec.md) — required reading
+before writing a fourth client.
 
-```cpp
-// Server wraps it in MessagePack automatically (FR-1 + FR-4)
-int status = iotClient.publishQueue("device/status", "heartbeat");
-if (status == 200) Serial.println("Heartbeat sent");
+### Python CLI (`stra2us`)
+
+`tools/stra2us_cli` — a Python client for testing, scripting, and
+catalog publishing. Lives at `tools/` and self-installs via
+`pip install -e tools/`. Supports publish/consume, KV read/write,
+catalog publish, and ad-hoc HMAC-signed requests against any stra2us
+instance.
+
+```sh
+stra2us --url https://stra2us.austindavid.com --client-id <id> \
+    --secret <hex> publish sensors/temp '{"c": 22.4}'
 ```
 
-### Consume
-
-```cpp
-uint8_t rxBuf[256];
-size_t rxLen = 0;
-int status = iotClient.consumeQueue(
-    "commands", rxBuf, sizeof(rxBuf), &rxLen);
-if (status == 200) {
-    // rxBuf contains a valid MessagePack message
-} else if (status == 204) {
-    // Queue is empty — nothing to do
-} else if (status == 401) {
-    Serial.println("Auth failure — check secret");
-} else if (status == -1) {
-    Serial.println("TCP connection failed");
-}
-```
-
-### KV Read/Write
-
-```cpp
-int status = iotClient.writeKV("config", buf, len);
-int status = iotClient.readKV("config", rxBuf, sizeof(rxBuf), &rxLen);
-```
-
----
-
-## CLI Test Client
-
-```bash
-cd backend
-source venv/bin/activate
-
-# Publish (JSON or plain string)
-python test_client.py --client-id xxx --secret xxx \
-    publish sensor_data '{"temp": 22.4}'
-
-# Follow a queue (polls until Ctrl-C)
-python test_client.py --client-id xxx --secret xxx \
-    follow sensor_data --delay 1.0
-
-# KV read/write
-python test_client.py --client-id xxx --secret xxx \
-    set device-config '{"interval": 60}'
-python test_client.py --client-id xxx --secret xxx \
-    get device-config
-
-# Point at a remote server
-python test_client.py --url http://192.168.1.50:8000 \
-    --client-id xxx --secret xxx \
-    publish heartbeat ok
-```
+See [**`tools/README.md`**](tools/README.md) for full subcommand
+reference and examples.
 
 ---
 
@@ -334,70 +291,21 @@ curl -u admin:password -X POST \
 
 ## Changelog
 
+### 2026-05-06 — v1.5: OAuth, hostname-aware auth, staging environment
+
+OAuth (Google) auth on the browser hostname; htpasswd retained as
+the rescue path on the device hostname. New `tools/stage` helper
+wraps the dev → staging → prod flow with smoke gates at every
+checkpoint. Bootstrap-default `rescue` user with soft warning + UI
+banner until the operator overrides. Implementation history,
+phase-by-phase rationale, and the rules of operation that produced
+this iteration: [`docs/fr_v15_incremental.md`](docs/fr_v15_incremental.md).
+
 ### 2026-04-13 — Admin UI cleanup + Activity Log overhaul
 
-**UI hardening & cleanup**
+UI hardening (CSS fixes, XSS-safe rendering of dynamic content),
+modal close-button null-guard. Activity log migrated from Redis
+LIST → STREAM with 24h time-based retention + 150k count-based
+safety cap. Per-client filter chips above the log table.
 
-- Fixed missing CSS `@keyframes pulse` — the Topic Monitor "Live"
-  indicator now animates as intended.
-- Added missing `.text-muted` CSS class — empty-state messages
-  ("No active queues", etc.) now render in muted gray instead of
-  bright white.
-- Removed unused `.logo` CSS rule (dead code; sidebar uses
-  `.sidebar-logo`).
-- Extracted ~25 inline `style=` attributes from `index.html` into
-  named CSS classes (`form-label`, `form-hint`, `modal-actions`,
-  `monitor-controls`, `card-toolbar`, `btn-ghost`, `filter-chip`,
-  etc.) for maintainability.
-- Added `escapeHtml()` sanitization to all dynamic content injected
-  via JS template literals — topic names, client IDs, KV keys, log
-  fields, and monitor data. Prevents XSS if any of these values
-  contain HTML special characters.
-- Fixed null-guard bug in the modal close-button handler (`app.js`)
-  that could throw a TypeError if `.closest('.modal')` returned null.
-
-**Activity Log: storage + retention**
-
-- Migrated `system:activity_log` from a Redis LIST (capped at 1,000
-  entries with no time awareness) to a Redis STREAM with
-  dual-constraint retention:
-  - **Time-based:** entries older than 24 hours are trimmed via
-    `XTRIM MINID`.
-  - **Count-based safety cap:** `MAXLEN ~ 150000` (~11 MB) prevents
-    unbounded growth from unusually chatty clients.
-- Rationale: the previous 1,000-entry cap provided only minutes of
-  history at moderate traffic. The new policy retains a full 24
-  hours for normal workloads while bounding worst-case storage.
-- **Migration note:** `system:activity_log` changed from LIST to
-  STREAM type. Before deploying, delete the old key:
-  `docker exec stra2us-iot redis-cli DEL system:activity_log`.
-  Client credentials and queue data are not affected.
-
-**Activity Log: per-client filtering**
-
-- Added `client_id` query parameter to `GET /api/admin/logs` —
-  accepts one or more client IDs for server-side filtering. Default
-  (omitted) returns all clients.
-- Default limit increased from 50 to 200 to take advantage of deeper
-  retention.
-- Admin UI now shows toggle-able filter chips above the log table,
-  one per registered client. Default is "show all"; clicking a chip
-  filters to that client. Multiple chips can be active
-  simultaneously.
-- Client chip list refreshes each time the Activity Logs tab is
-  opened (picks up newly registered clients).
-
-**Validation performed:**
-
-- Pulse animation confirmed working on Topic Monitor live indicator.
-- All modals (Peek, KV Editor, ACL Editor) open and close correctly
-  after close-button handler fix.
-- Dashboard, Key Management, ACL editing, Topic Monitor,
-  Backup/Restore all verified functional after CSS refactor — no
-  visual regressions.
-- Log filter chips render for all registered clients; toggling
-  filters correctly; deselecting all returns to full view; 5-second
-  auto-refresh respects active filter.
-- Peek, Delete, Edit operations on queues and KV pairs confirmed
-  working after `routes_admin.py` edits.
-- Backup download confirmed producing valid JSON after file edits.
+For older entries, `git log --oneline` and the FR docs in `docs/`.

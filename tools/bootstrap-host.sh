@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 Austin David — PolyForm Noncommercial 1.0.0
+# See LICENSE in the repo root.
 # tools/bootstrap-host.sh — set up the prod + staging directory layout
 # on the deploy host. Run ONCE on the host (not from dev).
 #

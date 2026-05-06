@@ -5,7 +5,47 @@ the v1.5 scope as agreed during planning. Builds on
 [`fr_application_view.md`](fr_application_view.md) (which shipped the
 customer surface; v1.5 makes it real for actual external customers).*
 
-## Status
+## Status — superseded by `fr_v15_incremental.md` for the as-shipped record
+
+> ⚠️ **This document is the original pre-implementation FR.** v1.5
+> shipped 2026-05-06; the as-shipped architecture, phase-by-phase
+> rollout history, and current operational details are in
+> [**`fr_v15_incremental.md`**](fr_v15_incremental.md). Read that
+> first if you're trying to understand the system's *current* state.
+>
+> This file is preserved as a historical record of the original
+> design intent. Sections below remain useful for *why* decisions
+> were made; they are **not authoritative** for *what was built*.
+>
+> **Notable divergences from this FR that landed in `fr_v15_incremental.md`:**
+>
+> - **Hostname naming.** This FR proposed `app.stra2us.austindavid.com`
+>   for the browser path and `stra2us.austindavid.com` for the device
+>   path. As shipped: `stra2us.austindavid.com` is the *browser* host
+>   (CF tunnel) and `iot.stra2us.austindavid.com` is the *device* host
+>   (direct A record, HTTP/8153). Roles effectively swapped from the
+>   original sketch — operator preferred the bare hostname for the
+>   human-facing surface.
+> - **Rescue path.** Originally proposed as Phase 7 cleanup of the
+>   device-hostname admin route. As shipped: `RESCUE_USERS` pattern
+>   in code (default `{"rescue"}`), bootstrap-default password file
+>   committed in repo, soft warning + UI banner when operator hasn't
+>   overridden, hostname-aware logout that busts Chrome's Basic Auth
+>   cache via realm-change.
+> - **Staging environment.** Not in this FR at all. Added as Phase 4.5
+>   based on the hard lesson that "deploy then smoke-test in prod" is
+>   the failure mode the original v1.5 attempt collapsed under.
+>   See [`staging_environment.md`](staging_environment.md).
+> - **Provisioning UI** (Phase 5). Mentioned briefly here; full design
+>   deferred until Phase 5 actually lands.
+> - **Implementation order + checkpoints.** This FR didn't have the
+>   phased "one variable per phase, smoke-green at each checkpoint"
+>   discipline. That discipline (and the Rules of Operation it
+>   produced) is what made v1.5 actually ship — see
+>   [`README.md`](../README.md) "Rules of Operation" and
+>   [`fr_v15_incremental.md`](fr_v15_incremental.md).
+
+## Original status (historical, as written 2026-05-04)
 
 **Pending — not yet implemented.** This is the v1.5 starting point;
 treat the scope below as committed-but-revisable rather than locked.

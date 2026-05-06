@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Austin David — PolyForm Noncommercial 1.0.0
+# See LICENSE in the repo root.
 """Customer-facing /app/ surface (see docs/fr_application_view.md).
 
 Three routes:

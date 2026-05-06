@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 Austin David — PolyForm Noncommercial 1.0.0
+# See LICENSE in the repo root.
 # tools/sync-secrets.sh — push host-bound credentials from this dev
 # checkout to the deploy host. Run on DEV, not on host.
 #

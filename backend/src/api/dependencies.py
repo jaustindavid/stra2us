@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Austin David — PolyForm Noncommercial 1.0.0
+# See LICENSE in the repo root.
 from fastapi import Request, HTTPException, Security, Depends
 from fastapi.security import APIKeyHeader
 from core.redis_client import get_redis_client

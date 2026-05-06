@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Austin David — PolyForm Noncommercial 1.0.0
+# See LICENSE in the repo root.
 """Reference CLI for Stra2us KV catalogs.
 
 See docs/catalog_spec.md in the stra2us repo for the catalog schema

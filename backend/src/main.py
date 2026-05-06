@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Austin David — PolyForm Noncommercial 1.0.0
+# See LICENSE in the repo root.
 import sys
 import os
 sys.path.insert(0, os.path.dirname(__file__))

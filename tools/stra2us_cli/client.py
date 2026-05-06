@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Austin David — PolyForm Noncommercial 1.0.0
+# See LICENSE in the repo root.
 """HMAC-signed HTTP client for the stra2us server.
 
 Mirrors the device-side signing protocol in client/src/IoTClient.cpp:
