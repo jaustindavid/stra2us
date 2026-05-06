@@ -21,4 +21,4 @@ STAGING_DIR=/volume1/stra2us/stra2us-staging
 # The remote the host will clone from. Same URL you use on dev.
 # Host must already be authenticated (we confirmed git push/pull work
 # from there).
-GIT_REMOTE=git@github.com:jaustindavid/stra2us.git
+GIT_REMOTE=https://github.com/jaustindavid/stra2us.git
