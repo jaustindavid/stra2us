@@ -14,26 +14,12 @@
   The admin UI is dynamic enough that edge caching offers little
   value and a lot of confusion.
 
-- **Make seed/bootstrap idempotent: merge htpasswd defaults; skip
-  already-provisioned users.** Two related issues that share a
-  shape:
-  1. **`bootstrap-host.sh`'s `seed_htpasswd`** currently skips
-     entirely if `backend/admin.htpasswd` already exists. On hosts
-     where the file pre-existed (e.g., before `admin.htpasswd.default`
-     was introduced), the rescue user never gets added — operator
-     has to manually `grep '^rescue:' default >> live`. Fix: instead
-     of skip-if-exists, merge per-user. For each user in
-     `admin.htpasswd.default`, append to `admin.htpasswd` if the
-     username isn't already present.
-  2. **`tools/stage seed-users`** always re-prompts for smoke +
-     admin passwords even when those users are already provisioned.
-     Annoying on re-run, forces operator to remember/re-type
-     credentials. Fix: check if the user already exists in htpasswd
-     and `admin_acls:<user>` Redis row; skip silently with "✓
-     already provisioned" line. Add `--force` flag to bypass the
-     checks for fix-corrupt-state cases.
-  Both changes share the "skip if already there + force flag for
-  override" shape. Should land together.
+- ~~**Make seed/bootstrap idempotent.**~~ Both halves landed
+  2026-05-06: `bootstrap-host.sh::seed_htpasswd` merges per-user
+  (instead of skip-if-exists), and `tools/stage seed-users` skips
+  already-provisioned users with `--force` to override. Tested
+  locally via `tools/tests/test_bootstrap_seed.sh` for the file
+  side; staging integration confirms the Redis side.
 
 - **Add smoke-test coverage for `/api/admin/security_warnings`.**
   Currently `tools/smoke_test.sh` doesn't exercise the new

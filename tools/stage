@@ -16,7 +16,9 @@
 #   status               Show staging container states
 #   wait-tunnel          Poll cloudflared logs until 4 connections register
 #   smoke                Run smoke test against staging hostnames
-#   seed-users           Provision the smoke + admin + OAuth seed users (idempotent)
+#   seed-users [--force] Provision the smoke + admin + OAuth seed users
+#                        Idempotent: skips users already in htpasswd + Redis.
+#                        --force re-provisions regardless of existing state.
 #   deploy [ref]         git pull (or checkout <ref>), rebuild image,
 #                        restart stack, wait for tunnel
 #   help                 Print this message
@@ -57,6 +59,20 @@ dcs() {
 
 require_env_file() {
     [[ -f "$STAGING_ENV_FILE" ]] || die "$STAGING_ENV_FILE missing — see docs/staging_environment.md sub-task 3d"
+}
+
+# True if the username has an entry in the host-side admin.htpasswd.
+htpasswd_has_user() {
+    local user="$1"
+    grep -q "^${user}:" "$REPO_ROOT/backend/admin.htpasswd" 2>/dev/null
+}
+
+# True if `admin_acls:<user>` exists in the staging Redis.
+redis_has_acl() {
+    local user="$1"
+    local v
+    v=$(dcs exec -T "$STAGING_BACKEND_SERVICE" redis-cli EXISTS "admin_acls:$user" 2>/dev/null | tr -d '\r\n')
+    [[ "$v" == "1" ]]
 }
 
 # --- subcommands -----------------------------------------------------
@@ -172,38 +188,64 @@ cmd_deploy() {
 
 cmd_seed_users() {
     require_env_file
-    echo "→ seeding staging users (idempotent)"
 
-    # SMOKE user — htpasswd + wildcard ACL. Password sourced from
-    # SMOKE_ADMIN_PASS in .env.staging if set, else prompted.
-    local smoke_pass
-    if grep -q '^SMOKE_ADMIN_PASS=' "$STAGING_ENV_FILE"; then
-        smoke_pass=$(grep '^SMOKE_ADMIN_PASS=' "$STAGING_ENV_FILE" | cut -d= -f2- | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")
+    local force=0
+    if [[ "${1:-}" == "--force" ]]; then
+        force=1
+        echo "→ --force: re-provisioning all users regardless of existing state"
     else
-        read -rsp "Password for staging 'smoke' user: " smoke_pass; echo
+        echo "→ seeding staging users (idempotent — skip if already provisioned;"
+        echo "   pass --force to re-provision and overwrite)"
     fi
-    (cd backend && python3 create_admin.py smoke "$smoke_pass")
-    dcs exec "$STAGING_BACKEND_SERVICE" redis-cli SET \
-        'admin_acls:smoke' '{"permissions":[{"prefix":"*","access":"rw"}]}'
 
-    # ADMIN user — htpasswd + wildcard ACL. Rescue path on iot-staging.
-    local admin_pass
-    read -rsp "Password for staging 'admin' user (rescue path): " admin_pass; echo
-    (cd backend && python3 create_admin.py admin "$admin_pass")
-    dcs exec "$STAGING_BACKEND_SERVICE" redis-cli SET \
-        'admin_acls:admin' '{"permissions":[{"prefix":"*","access":"rw"}]}'
+    local _wildcard='{"permissions":[{"prefix":"*","access":"rw"}]}'
 
-    # OAUTH user — wildcard ACL only (auth comes from Google).
+    # SMOKE user — htpasswd + wildcard ACL.
+    if (( !force )) && htpasswd_has_user smoke && redis_has_acl smoke; then
+        echo "  ✓ smoke already provisioned (htpasswd + ACL); skipping"
+    else
+        local smoke_pass
+        if grep -q '^SMOKE_ADMIN_PASS=' "$STAGING_ENV_FILE"; then
+            smoke_pass=$(grep '^SMOKE_ADMIN_PASS=' "$STAGING_ENV_FILE" | cut -d= -f2- | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")
+        else
+            read -rsp "Password for staging 'smoke' user: " smoke_pass; echo
+        fi
+        (cd "$REPO_ROOT/backend" && python3 create_admin.py smoke "$smoke_pass")
+        dcs exec -T "$STAGING_BACKEND_SERVICE" redis-cli SET \
+            'admin_acls:smoke' "$_wildcard"
+        echo "  ✓ smoke provisioned"
+    fi
+
+    # ADMIN user — htpasswd + wildcard ACL. Rescue-style operator path
+    # on iot-staging (htpasswd is reachable on the device hostname even
+    # when OAuth is the primary path on the browser hostname).
+    if (( !force )) && htpasswd_has_user admin && redis_has_acl admin; then
+        echo "  ✓ admin already provisioned (htpasswd + ACL); skipping"
+    else
+        local admin_pass
+        read -rsp "Password for staging 'admin' user (rescue path): " admin_pass; echo
+        (cd "$REPO_ROOT/backend" && python3 create_admin.py admin "$admin_pass")
+        dcs exec -T "$STAGING_BACKEND_SERVICE" redis-cli SET \
+            'admin_acls:admin' "$_wildcard"
+        echo "  ✓ admin provisioned"
+    fi
+
+    # OAUTH user — wildcard ACL only (auth comes from Google). We have
+    # to ask for the email before we can check; blank input skips.
     local oauth_email
-    read -rp "Google email for staging OAuth user: " oauth_email
-    dcs exec "$STAGING_BACKEND_SERVICE" redis-cli SET \
-        "admin_acls:$oauth_email" '{"permissions":[{"prefix":"*","access":"rw"}]}'
+    read -rp "Google email for staging OAuth user (blank to skip): " oauth_email
+    if [[ -z "$oauth_email" ]]; then
+        echo "  → skipping OAuth user (none specified)"
+    elif (( !force )) && redis_has_acl "$oauth_email"; then
+        echo "  ✓ $oauth_email already provisioned (ACL); skipping"
+    else
+        dcs exec -T "$STAGING_BACKEND_SERVICE" redis-cli SET \
+            "admin_acls:$oauth_email" "$_wildcard"
+        echo "  ✓ $oauth_email provisioned"
+    fi
 
     echo
-    echo "Seed users provisioned:"
-    echo "  smoke (htpasswd + wildcard ACL)"
-    echo "  admin (htpasswd + wildcard ACL — rescue path)"
-    echo "  $oauth_email (OAuth + wildcard ACL)"
+    echo "Done."
 }
 
 # --- dispatch --------------------------------------------------------
