@@ -97,7 +97,7 @@ browser path.**
 | 2 | Add OAuth code, dormant behind feature flag | **Done** |
 | 3 | Flag on, operator self-test of OAuth round-trip | **Done** |
 | 4 | Hostname-aware middleware redirects browser → OAuth | **Done** |
-| 4.5 | Build staging environment | TBD (gates Phase 5+) |
+| 4.5 | Build staging environment | **Done** (gates Phase 5+) |
 | 5 | Provisioning UI for granting access | TBD (requires staging) |
 | 6 | Migrate operator off htpasswd; narrow to RESCUE_USERS | TBD |
 | 7 | Optional cleanup of legacy browser access | TBD |

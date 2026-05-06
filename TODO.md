@@ -2,6 +2,39 @@
 
 ## Near-term
 
+- **Revisit top-level README for freestanding-repo visibility.** The
+  README is now front-and-center on the GitHub repo page. The
+  current structure was inherited from the monorepo and emphasizes
+  feature/architecture detail. For a fresh visitor it should lead
+  with: what this is, who it's for, a one-paragraph "what does it
+  do," then "how to deploy" (which is now correct). Consider
+  whether the C++ SDK + CLI client sections belong here or in their
+  own docs. Lower priority — the README is functionally correct as
+  of today's edits.
+
+- **Rewrite `docs/admin_auth_architecture.md` to reflect post-v1.5
+  reality.** Currently describes only the htpasswd + session-cookie
+  flow and explicitly says the project operates "without bloated
+  system dependencies like OAuth OIDC wrappers" — both untrue
+  post-v1.5. Should now cover: hostname-aware middleware (browser
+  host → OAuth, device host → htpasswd rescue), the `next=`
+  round-trip cookie, OAuth callback issuing the same `admin_session`
+  cookie that htpasswd does. Cross-reference
+  `fr_v15_incremental.md` for phase context.
+
+- **Rename `docs/staging.md` to clarify scope.** The file is
+  about *local-host* bring-up for running the live test suite, not
+  about the docker-based staging environment (which is in
+  `docs/staging_environment.md`). The shared name is confusing.
+  Suggested rename: `docs/local_dev.md` or `docs/host_dev_runtime.md`.
+
+- **Audit `docs/fr_v15_auth.md` against shipped reality.** The
+  original auth FR was written before implementation; some
+  decisions changed during the rebuild (host naming, redirect URI
+  shape, middleware structure). Either annotate sections that
+  diverge with "see fr_v15_incremental.md for as-shipped" or do a
+  cleanup pass to align.
+
 - **Add copyright/license header to source files.** The repo has a
   LICENSE file (PolyForm Noncommercial 1.0.0) but individual source
   files lack a copyright/license notice. Add a one-line header to

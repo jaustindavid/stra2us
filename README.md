@@ -90,54 +90,64 @@ the v1.5 rollout that made these rules concrete.
 
 ---
 
-## Installation
+## Deploying
 
-### 1. Requirements
+The deploy host runs **two independent stacks** on the same docker
+host: `prod` (live traffic) and `staging` (validation before
+prod). Code reaches the host via git; secrets reach it via
+`tools/sync-secrets.sh`. See
+[`docs/staging_environment.md`](docs/staging_environment.md) for
+the architecture and rationale.
 
-- Python 3.9 or higher
-- Redis Server (`sudo apt install redis-server` on Debian/Ubuntu)
-
-### 2. Start the Backend
-
-```bash
-cd backend
-
-# Local development
-./start.sh
-
-# For external network access (e.g. Raspberry Pi)
-./start.sh --host 0.0.0.0
-
-# Custom port
-./start.sh --host 0.0.0.0 --port 9000
-```
-
-> The script checks that Redis is running before starting. If it's
-> not, it will print the exact command to start it.
-
-### 3. Create the Admin User
+### One-time host bootstrap
 
 ```bash
-cd backend
-source venv/bin/activate
-python create_admin.py your_username your_password
+# On dev — fill in tools/.deploy-config (see .deploy-config.example)
+# Then push the host-bound .env files:
+tools/sync-secrets.sh
+
+# On host — clone both directories + create volume dirs:
+./tools/bootstrap-host.sh
 ```
 
-Then open `http://<your-ip>:8000/admin` in a browser.
+### Bringing up staging
 
-### 4. Running the live test suite locally
+```bash
+# On host, in $STAGING_DIR:
+tools/stage up
+tools/stage wait-tunnel
+tools/stage seed-users      # idempotent
+tools/stage smoke           # 9/9 expected once a device is heartbeating
+```
 
-See [`docs/staging.md`](docs/staging.md) for the host-side bring-up
-(skipping the docker-assumed paths), provisioning a test client
-straight in Redis, and running `tools/tests/test_*_live.py` against
-it.
+### Promoting to prod
 
-### 5. Raspberry Pi Deployment Tips
+Tag a staging-verified commit, then re-point prod's checkout at
+the tag:
 
-- **Auto-start Redis:** `sudo systemctl enable redis-server`
-- **Firewall:** `sudo ufw allow 8000`
-- **Run in background:** `nohup ./start.sh --host 0.0.0.0 &`
-- **Check connectivity:** `curl http://<rpi-ip>:8000/health`
+```bash
+# On dev:
+git tag -a v1.X.Y <sha-verified-on-staging> -m "what changed"
+git push origin v1.X.Y
+
+# On host, in $PROD_DIR:
+git fetch --tags
+git checkout -B deploy v1.X.Y
+docker compose build stra2us-iot
+docker compose up -d
+( set -a && source .env && tools/smoke_test.sh )    # 9/9 expected
+```
+
+A `tools/stage promote <tag>` wrapper for the prod side is on the
+TODO list.
+
+### Local development (no docker)
+
+For running tests against a host-side backend (no docker), see
+[`docs/staging.md`](docs/staging.md) — covers the bring-up dance
+for `tools/tests/test_*_live.py`. (That file's name is a holdover
+from before the docker-based staging environment existed; it's
+about local dev, not the staging stack.)
 
 ---
 
