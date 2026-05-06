@@ -246,27 +246,57 @@ app.include_router(admin_router, prefix="/api/admin", tags=["admin"])
 app.include_router(device_router, tags=["device"])
 
 # Logout endpoint. Registered BEFORE the /admin static mount so this
-# route wins path resolution. Clears all session/oauth cookies and
-# busts the browser's cached Basic Auth credentials by responding 401
-# with a *different* WWW-Authenticate realm than the live one
-# ("logged-out" vs "Admin Area"). Chrome / Firefox / Safari treat
-# realm changes as "discard cached credentials," which is otherwise
-# only achievable by quitting the browser entirely.
+# route wins path resolution. Behavior splits by hostname so the
+# response is appropriate to the auth scheme in play:
+#
+#   - Browser host (OAuth path): respond 200 with a plain HTML
+#     "Signed out" page. No Basic-Auth dialog. User clicks "Sign in
+#     again" to re-enter the OAuth flow.
+#
+#   - Device host (htpasswd path): respond 401 with WWW-Authenticate
+#     realm="logged-out" (different from the live realm "Admin Area").
+#     The realm change is what flushes Chrome's cached Basic Auth
+#     credentials — without it, "log out" is impossible without
+#     quitting the browser. The user's browser may briefly flash a
+#     Basic Auth dialog; closing it leaves them logged out cleanly.
+#
+# Both paths clear admin_session, oauth_state, oauth_redirect_to
+# cookies so the server-side view of the session is also gone.
+from fastapi.responses import HTMLResponse
+
+_LOGOUT_HTML = """<!doctype html>
+<html><head><title>Signed out</title>
+<style>
+  body { background: #0d1117; color: #c9d1d9;
+         font-family: system-ui, -apple-system, sans-serif;
+         display: flex; align-items: center; justify-content: center;
+         height: 100vh; margin: 0; }
+  .card { text-align: center; }
+  h2 { font-weight: normal; color: #fff; margin: 0 0 16px; }
+  a { color: #00f0ff; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+</style></head>
+<body><div class="card">
+  <h2>Signed out.</h2>
+  <p><a href="/admin/">Sign in again</a></p>
+</div></body></html>
+"""
+
+
 @app.get("/admin/logout", include_in_schema=False)
 async def admin_logout(request: Request):
-    body = (
-        "Signed out.\n\n"
-        "To sign in again, navigate to /admin/.\n"
-    )
-    response = Response(
-        status_code=401,
-        headers={"WWW-Authenticate": 'Basic realm="logged-out"'},
-        content=body,
-        media_type="text/plain",
-    )
-    # Path="/" matches how the OAuth callback (and the Basic Auth path)
-    # set these. Without an explicit path, delete_cookie wouldn't
-    # match the OAuth-issued cookies.
+    if _is_browser_host(request):
+        response = HTMLResponse(content=_LOGOUT_HTML, status_code=200)
+    else:
+        response = Response(
+            status_code=401,
+            headers={"WWW-Authenticate": 'Basic realm="logged-out"'},
+            content="Signed out.\n\nTo sign in again, navigate to /admin/.\n",
+            media_type="text/plain",
+        )
+    # Path="/" matches how the OAuth callback (and the Basic Auth
+    # path) set these. Without an explicit path, delete_cookie
+    # wouldn't match the OAuth-issued cookies.
     response.delete_cookie("admin_session", path="/")
     response.delete_cookie("oauth_state", path="/")
     response.delete_cookie("oauth_redirect_to", path="/")
