@@ -1582,6 +1582,38 @@ async function applyWhoami() {
     }
 }
 
+// Security warnings — populates the #securityBanners div at the top
+// of the page with anything /api/admin/security_warnings reports.
+// Auth-gated endpoint so this only fires for logged-in admins; by
+// design the banners stay visible across view switches (#securityBanners
+// is outside .app-container).
+async function fetchSecurityWarnings() {
+    const { ok, data } = await fetchAPI('/security_warnings');
+    if (!ok || !data || !Array.isArray(data.warnings)) return;
+    const container = document.getElementById('securityBanners');
+    if (!container) return;
+    if (data.warnings.length === 0) {
+        container.classList.add('hidden');
+        container.innerHTML = '';
+        return;
+    }
+    container.classList.remove('hidden');
+    container.innerHTML = data.warnings.map(w => {
+        const sev = (w.severity === 'error') ? 'severity-error' : 'severity-warning';
+        const icon = (w.severity === 'error') ? '⛔' : '⚠';
+        return `
+            <div class="security-banner ${sev}" data-warning-id="${escapeHtml(w.id || '')}">
+                <span class="security-banner-icon">${icon}</span>
+                <div class="security-banner-body">
+                    <div class="security-banner-message">${escapeHtml(w.message || '')}</div>
+                    ${w.action ? `<code class="security-banner-action">${escapeHtml(w.action)}</code>` : ''}
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
 // Init
 applyWhoami();
 fetchStats();
+fetchSecurityWarnings();

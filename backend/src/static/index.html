@@ -9,6 +9,11 @@
     <link rel="stylesheet" href="styles.css?v=2">
 </head>
 <body>
+    <!-- Security warnings banner — populated by app.js on load.
+         Hidden by default; shown when /api/admin/security_warnings
+         returns non-empty. -->
+    <div id="securityBanners" class="security-banners hidden"></div>
+
     <div class="app-container">
         <!-- Sidebar Navigation -->
         <nav class="sidebar">

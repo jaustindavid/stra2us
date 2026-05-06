@@ -640,3 +640,48 @@ tr.catalog-var-row:hover td { background: rgba(0, 240, 255, 0.06); }
    in Chrome/Safari/Edge; text-security is the future-spec name. The
    value itself is still in .value — this is purely visual. */
 .value-masked { -webkit-text-security: disc; text-security: disc; }
+
+/* --- Security warnings banner --------------------------------------
+   Populated at dashboard load by app.js from /api/admin/security_warnings.
+   Sits above .app-container so it's persistent across view switches.
+   One banner row per warning. */
+.security-banners {
+    width: 100%;
+    background: #2a1d00;          /* dark amber base */
+    border-bottom: 1px solid #ffaa00;
+    color: #ffd47a;
+    font-size: 0.95rem;
+    padding: 0;
+}
+.security-banners.hidden { display: none; }
+.security-banner {
+    padding: 10px 18px;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    border-top: 1px solid rgba(255, 170, 0, 0.25);
+}
+.security-banner:first-child { border-top: none; }
+.security-banner-icon {
+    flex: 0 0 auto;
+    font-weight: bold;
+    color: #ffaa00;
+}
+.security-banner-body { flex: 1 1 auto; }
+.security-banner-message { font-weight: 600; }
+.security-banner-action {
+    display: block;
+    margin-top: 4px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.85rem;
+    color: #ffe1a8;
+    opacity: 0.9;
+}
+.security-banner.severity-error {
+    background: #2a0008;
+    color: #ff8aa8;
+    border-bottom-color: var(--accent-danger);
+}
+.security-banner.severity-error .security-banner-icon {
+    color: var(--accent-danger);
+}

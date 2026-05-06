@@ -3,6 +3,7 @@ from fastapi.security import APIKeyHeader
 from core.redis_client import get_redis_client
 from core.security import verify_signature, verify_timestamp
 import json
+import os
 
 client_id_header = APIKeyHeader(name="X-Client-ID")
 timestamp_header = APIKeyHeader(name="X-Timestamp")
@@ -53,19 +54,42 @@ CATALOG_STASH_PREFIX = "_catalog/"
 ADMIN_ACL_KEY_FMT = "admin_acls:{user}"
 
 
+# Rescue users — usernames that always get a wildcard ACL when no
+# admin_acls:<user> Redis row exists. The break-glass pattern: if the
+# system gets into a bad state (Redis corruption, ACLs accidentally
+# wiped, fresh bootstrap) and a rescue user can authenticate via
+# htpasswd, they can still log in with full permissions and fix
+# things. Without this, htpasswd-only auth means "you can sign in but
+# can't do anything." Configurable via env var (comma-separated).
+# Phase 6 of fr_v15_incremental.md narrows htpasswd to just this list
+# as the primary admin path moves to OAuth.
+RESCUE_USERS = set(
+    u.strip() for u in os.environ.get("STRA2US_RESCUE_USERS", "rescue").split(",")
+    if u.strip()
+)
+
+_RESCUE_ACL = {"permissions": [{"prefix": "*", "access": "rw"}]}
+
+
 async def load_admin_acl(username: str) -> dict:
-    """Load an admin user's ACL from Redis. Returns an empty permissions
-    envelope if the record is missing — i.e. strict deny-all until the
-    migration tool (or the UI) has provisioned a row for this user.
+    """Load an admin user's ACL from Redis. Returns an empty
+    permissions envelope (deny-all) if the record is missing —
+    EXCEPT for rescue users, who get a hardcoded wildcard ACL so the
+    break-glass path always works regardless of Redis state.
     """
     redis = get_redis_client()
     raw = await redis.get(ADMIN_ACL_KEY_FMT.format(user=username))
-    if not raw:
-        return {"permissions": []}
-    try:
-        return json.loads(raw)
-    except ValueError:
-        return {"permissions": []}
+    if raw:
+        try:
+            return json.loads(raw)
+        except ValueError:
+            pass  # malformed JSON — fall through, but don't exempt
+                  # rescue users from this; if their stored ACL is
+                  # broken, deny-all is safer than implicit wildcard.
+            return {"permissions": []}
+    if username in RESCUE_USERS:
+        return _RESCUE_ACL
+    return {"permissions": []}
 
 
 async def get_admin_context(request: Request) -> dict:

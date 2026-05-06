@@ -15,7 +15,7 @@ from api.dependencies import (
     require_admin_superuser,
     check_acl,
 )
-from core.admin_auth import HTPASSWD_FILE
+from core.admin_auth import HTPASSWD_FILE, is_rescue_on_default
 from core.perf_log import PerfPhases, PERF_LOG_STREAM
 import os
 
@@ -259,6 +259,37 @@ async def update_admin_user_acl(username: str, acl_update: AclUpdate, _: dict = 
     acl = {"permissions": [p.dict() for p in acl_update.permissions]}
     await redis.set(ADMIN_ACL_KEY_FMT.format(user=username), json.dumps(acl))
     return {"status": "ok", "username": username, "acl": acl}
+
+
+@router.get("/security_warnings")
+async def security_warnings(_: dict = Depends(get_admin_context)):
+    """Surface non-blocking security concerns the admin should
+    address. Frontend (`app.js`) fetches this on dashboard load and
+    renders a banner per warning. Severities: `warning` (yellow),
+    `error` (red).
+
+    Currently checked:
+      - rescue user is on the bootstrap-default password.
+
+    Future candidates: TLS cert expiry, default OAuth secret in use,
+    htpasswd file has weak hashes, etc.
+    """
+    warnings = []
+    if is_rescue_on_default():
+        warnings.append({
+            "id": "rescue-default-password",
+            "severity": "warning",
+            "message": (
+                "Rescue user is on the bootstrap-default password. "
+                "Change it before exposing the device hostname to "
+                "anything sensitive."
+            ),
+            "action": (
+                "On the host: cd backend && "
+                "python3 create_admin.py rescue '<new-password>'"
+            ),
+        })
+    return {"warnings": warnings}
 
 
 @router.get("/me")
