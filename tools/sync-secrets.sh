@@ -37,9 +37,12 @@ fi
 # shellcheck disable=SC1090
 source "$CONFIG_FILE"
 
-for v in DEPLOY_HOST DEPLOY_USER PROD_DIR STAGING_DIR; do
+for v in DEPLOY_HOST DEPLOY_USER PROD_DIR_REMOTE STAGING_DIR_REMOTE; do
     if [[ -z "${!v:-}" ]]; then
         echo "ERROR: $v is empty in $CONFIG_FILE" >&2
+        echo "  (PROD_DIR_REMOTE / STAGING_DIR_REMOTE are the SCP-namespace" >&2
+        echo "   paths — on Synology, e.g. 'stra2us/stra2us-prod'." >&2
+        echo "   See tools/.deploy-config.example.)" >&2
         exit 1
     fi
 done
@@ -102,8 +105,8 @@ fi
 
 echo
 echo "→ Syncing secrets:"
-push_one "$ENV_PROD"    "$PROD_DIR/.env"            ".env.host-prod    → host .env"
-push_one "$ENV_STAGING" "$STAGING_DIR/.env.staging" ".env.host-staging → host .env.staging"
+push_one "$ENV_PROD"    "$PROD_DIR_REMOTE/.env"            ".env.host-prod    → host .env"
+push_one "$ENV_STAGING" "$STAGING_DIR_REMOTE/.env.staging" ".env.host-staging → host .env.staging"
 
 echo
 echo "✓ Done."

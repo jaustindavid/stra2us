@@ -14,12 +14,23 @@ DEPLOY_USER=admin
 DEPLOY_PORT=22
 
 # --- Host paths -------------------------------------------------------
-# Absolute paths on the deploy host. Two separate clones — one for
-# prod, one for staging. Pick a volume with growth room: redis_data
-# accumulates the activity-log stream (currently capped at MAXLEN
-# 150000), firmware/ holds OTA binaries.
+# Two separate clones on the host — one for prod, one for staging.
+# Pick a volume with growth room: redis_data accumulates the
+# activity-log stream (currently capped at MAXLEN 150000); firmware/
+# holds OTA binaries.
+#
+# PROD_DIR / STAGING_DIR are the ABSOLUTE paths used by host-side
+# scripts (bootstrap-host.sh, tools/stage).
 PROD_DIR=/volume1/stra2us/stra2us-prod
 STAGING_DIR=/volume1/stra2us/stra2us-staging
+
+# PROD_DIR_REMOTE / STAGING_DIR_REMOTE are the same dirs as seen via
+# the SCP namespace, used by sync-secrets.sh. On Synology, the SCP
+# subsystem roots at the shared-folder level (no leading slash);
+# /volume1/stra2us/ is just "stra2us/" to SCP. Other Linux hosts can
+# usually leave these the same as the absolute paths.
+PROD_DIR_REMOTE=stra2us/stra2us-prod
+STAGING_DIR_REMOTE=stra2us/stra2us-staging
 
 # --- Git remote -------------------------------------------------------
 # The remote the host will clone from. Same URL you use on dev.
