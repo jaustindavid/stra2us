@@ -84,10 +84,17 @@ cmd_bash() {
 }
 
 cmd_logs() {
+    # Default: follow (live tail). Pass --no-follow as the first arg
+    # for a one-shot read of the recent buffer (useful with grep).
+    local follow_flag="-f"
+    if [[ "${1:-}" == "--no-follow" ]]; then
+        follow_flag=""
+        shift
+    fi
     if [[ $# -gt 0 ]]; then
-        dcs logs --tail 200 -f "$@"
+        dcs logs --tail 200 $follow_flag "$@"
     else
-        dcs logs --tail 200 -f
+        dcs logs --tail 200 $follow_flag
     fi
 }
 
