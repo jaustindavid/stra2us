@@ -88,6 +88,29 @@ ensure_dir "$PROD_DIR/redis_data"
 ensure_dir "$STAGING_DIR/firmware_staging"
 ensure_dir "$STAGING_DIR/redis_data_staging"
 
+# Bootstrap admin.htpasswd from admin.htpasswd.default if not already
+# present. Idempotent — won't overwrite an existing htpasswd. The
+# default file ships a `rescue` user with a known starter password
+# (documented in README); operator MUST change it before exposing
+# the device hostname.
+seed_htpasswd() {
+    local target="$1"
+    local default_file="$target/backend/admin.htpasswd.default"
+    local live_file="$target/backend/admin.htpasswd"
+    if [[ -f "$live_file" ]]; then
+        echo "→ $live_file already exists, skipping default seed"
+        return
+    fi
+    if [[ ! -f "$default_file" ]]; then
+        echo "→ $default_file not found — skipping (manually create htpasswd later)"
+        return
+    fi
+    echo "→ seeding $live_file from admin.htpasswd.default"
+    cp "$default_file" "$live_file"
+}
+seed_htpasswd "$PROD_DIR"
+seed_htpasswd "$STAGING_DIR"
+
 cat <<EOF
 
 ✓ Bootstrap complete.

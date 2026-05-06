@@ -10,6 +10,42 @@ HTPASSWD_FILE = os.environ.get(
     os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "admin.htpasswd"),
 )
 
+# Bootstrap default htpasswd file. Tracked in git; bootstrap-host.sh
+# copies it into HTPASSWD_FILE on a fresh host so the rescue user
+# exists from minute zero. Operator is expected to change the rescue
+# password before exposing the device hostname; the startup check
+# (`is_rescue_on_default`) flags when they haven't yet.
+DEFAULT_HTPASSWD_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "admin.htpasswd.default",
+)
+
+
+def _find_user_line(filepath: str, user: str) -> str | None:
+    """Return the raw `username:salt$hash` line for `user` in the file,
+    or None if the user/file isn't present."""
+    if not os.path.exists(filepath):
+        return None
+    try:
+        with open(filepath) as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith(f"{user}:"):
+                    return line
+    except OSError:
+        return None
+    return None
+
+
+def is_rescue_on_default() -> bool:
+    """True iff the live htpasswd's `rescue` entry is byte-for-byte
+    identical to the entry shipped in admin.htpasswd.default. Once
+    the operator runs `create_admin.py rescue <newpass>`, a fresh
+    salt is generated and the entries diverge."""
+    live = _find_user_line(HTPASSWD_FILE, "rescue")
+    default = _find_user_line(DEFAULT_HTPASSWD_FILE, "rescue")
+    return live is not None and default is not None and live == default
+
 # In a production environment with multiple horizontally scaled workers, 
 # ADMIN_SESSION_SECRET should be statically set as an environment variable 
 # so all workers validate the same cookie. Otherwise, it generates a random 

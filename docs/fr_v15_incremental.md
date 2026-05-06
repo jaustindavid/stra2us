@@ -98,6 +98,7 @@ browser path.**
 | 3 | Flag on, operator self-test of OAuth round-trip | **Done** |
 | 4 | Hostname-aware middleware redirects browser → OAuth | **Done** |
 | 4.5 | Build staging environment | **Done** (gates Phase 5+) |
+| 4.6 | Prod cutover with data migration | **Done** (2026-05-06) |
 | 5 | Provisioning UI for granting access | TBD (requires staging) |
 | 6 | Migrate operator off htpasswd; narrow to RESCUE_USERS | TBD |
 | 7 | Optional cleanup of legacy browser access | TBD |
@@ -302,6 +303,64 @@ The smoke test already accepts `STRA2US_BROWSER_HOST` and
 runs against it unchanged. That's the minimum CI-shaped contract:
 green smoke against staging is required before any phase ships to
 prod.
+
+## Phase 4.6 — Prod cutover with data migration (DONE — 2026-05-06)
+
+The first promote from staging-verified code to prod. Took the
+form of standing up a new prod stack alongside the existing one
+(in `/volume1/stra2us/stra2us-prod/`), then a brief downtime
+window to migrate Redis state and swap port 8153 from old to new.
+
+Sequence:
+
+1. Tagged the staging-verified commit as `v1.5.0` and pushed.
+2. On the host, in the new prod dir: `git checkout -B deploy v1.5.0`
+   and `docker compose build` (no container started yet — would
+   conflict on port 8153).
+3. Tagged the running old-prod image as `:pre-v1.5-cutover` for
+   one-command rollback.
+4. Ran `redis-cli BGREWRITEAOF` on old prod to consolidate the
+   AOF before shutdown — belt-and-suspenders.
+5. Shut down old prod (`docker stop` + `docker rm` rather than
+   `docker compose down`, because old prod's `docker-compose.yaml`
+   had been corrupted by an unrelated mispaste — direct container
+   stop bypassed the file entirely).
+6. Copied state from old → new:
+   - `/volume1/stra2us/redis_data/.` →
+     `/volume1/stra2us/stra2us-prod/redis_data/`
+   - `/volume1/stra2us/backend/admin.htpasswd` →
+     `/volume1/stra2us/stra2us-prod/backend/admin.htpasswd`
+   - Firmware dir skipped — firmware now lives in KV, not on disk.
+7. Brought up new prod, waited for cloudflared to register all
+   four tunnel connections (~10-15s).
+8. Ran smoke from a LAN dev box: 9/9 green.
+9. Verified Redis state matched the pre-cutover baseline:
+   137 keys, 5 admin_acls, 13 client secrets — all match.
+10. UI eyeball through OAuth on prod's browser path passed; htpasswd
+    rescue on the device hostname still works; devices kept
+    heartbeating throughout.
+
+What it lights up: the Phase 4 hostname-aware middleware (browser
+host → OAuth, device host → htpasswd rescue) is now live on prod.
+The dep bumps from Phase 0 are also live. supervisord conf fix
+shipped.
+
+Quirks discovered during cutover, filed as TODOs (not blockers):
+- The smoke test does **not** work when run from the container
+  host itself — only from a LAN dev box. Cause unknown.
+- Old prod's `docker-compose.yaml` was corrupted by accident; was
+  worked around by stopping containers directly. Highlights the
+  value of the new repo's git-tracked compose file.
+
+The rollback path remains available indefinitely:
+```sh
+cd /volume1/stra2us/stra2us-prod && docker compose -p stra2us-prod down
+docker tag stra2us-stra2us-iot:pre-v1.5-cutover stra2us-stra2us-iot:latest
+cd /volume1/stra2us && docker compose up -d
+```
+Old data dir is untouched (we copied, didn't move). After a soak
+period when v1.5 has proven itself in prod, the snap-back image
+tag and old data dir can be cleaned up.
 
 ## Phase 5 — Provisioning UI (TBD — requires staging from Phase 4.5)
 

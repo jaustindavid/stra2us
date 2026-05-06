@@ -19,7 +19,7 @@ from urllib.parse import urlencode
 from fastapi import Request, Response
 from fastapi.responses import RedirectResponse
 from core.redis_client import get_redis_client
-from core.admin_auth import verify_password, generate_session_token, verify_session_token
+from core.admin_auth import verify_password, generate_session_token, verify_session_token, is_rescue_on_default
 from core.perf_log import DEFAULT_THRESHOLD_MS, write_perf_entry
 
 
@@ -275,6 +275,19 @@ app.include_router(oauth_router, tags=["oauth"])
 FIRMWARE_DIR = os.environ.get("STRA2US_FIRMWARE_DIR", "/firmware")
 os.makedirs(FIRMWARE_DIR, exist_ok=True)
 app.mount("/firmware", StaticFiles(directory=FIRMWARE_DIR), name="firmware")
+
+# Soft warning at startup if the rescue user is still on the
+# bootstrap-default password. Loud version (admin-UI banner) lives
+# in routes_admin / app.js — see /api/admin/security_warnings.
+if is_rescue_on_default():
+    _border = "=" * 70
+    print(_border, flush=True)
+    print("WARNING: 'rescue' user is on the bootstrap-default password.", flush=True)
+    print("Change it before exposing the device hostname to anything", flush=True)
+    print("sensitive:", flush=True)
+    print("    cd backend && python3 create_admin.py rescue '<new-password>'", flush=True)
+    print(_border, flush=True)
+
 
 @app.get("/health")
 def health_check():

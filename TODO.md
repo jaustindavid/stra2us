@@ -2,6 +2,48 @@
 
 ## Near-term
 
+- **Revisit backup/restore — provide a way to dump an entire app.**
+  The existing `/api/admin/keys/backup` only exports client
+  credentials (`client:<id>:secret` + `client:<id>:acl`). For the
+  v1.5 prod cutover we had to migrate a lot more state by copying
+  the Redis data dir wholesale: `admin_acls:*` rows (admin user
+  ACLs), KV data including `<app>/<resource>` and the new
+  KV-stored firmware blobs, queue contents, activity log, catalogs
+  (`_catalog/<app>/...`). A `cp -a redis_data/` works for a same-
+  host migration but not for cross-host moves or per-app exports.
+  Two complementary needs:
+  1. **Whole-instance dump** — extends the existing backup to cover
+     all of the above, suitable for full-server migrations or
+     periodic offline backups. Format: JSON or msgpack envelope.
+  2. **Per-app dump** — given an app name (e.g. `critterchron`),
+     export all its clients + ACLs + KV data + catalog + queues
+     (or selected subsets). Useful for cloning an app environment,
+     onboarding a new instance, or surgical restores.
+  Both should also support **restore** with at least the existing
+  "skip-existing / force-overwrite" semantics. Sensitive data
+  (HMAC secrets, OAuth tokens) keeps the existing "treat like a
+  password manager export" warnings.
+
+- **Fix or retire host-side smoke test runs.** Confirmed during
+  the v1.5 prod cutover: the smoke test **does not work** when run
+  from the container host — device-hostname checks return 503s
+  even when the deployment is fully healthy and the same smoke
+  test from a dev machine on the LAN comes back 9/9 green. Root
+  cause unknown; not a timing issue (it's reproducible and stable,
+  not flaky). Likely candidates: something about
+  loopback-via-public-hostname when both endpoints resolve to a
+  local IP; Synology's port-forward / hairpin NAT behavior; or a
+  curl/networking quirk specific to the container host. Decide:
+  1. **Fix it** — diagnose what's actually happening (tcpdump,
+     curl -v, etc.) and patch the smoke test or the host config.
+  2. **Retire host-side runs** — document smoke as a "run from a
+     LAN dev box, never from the container host" tool. Remove or
+     repurpose `tools/stage smoke` (perhaps make it ssh-invoke
+     from the dev machine instead).
+  Currently working around by running smoke from dev. Acceptable
+  short-term, not OK long-term — the closer to prod the verifier
+  runs, the better the signal.
+
 - **Revisit top-level README for freestanding-repo visibility.** The
   README is now front-and-center on the GitHub repo page. The
   current structure was inherited from the monorepo and emphasizes
@@ -142,7 +184,12 @@
   [`docs/staging_environment.md`](docs/staging_environment.md)
   for surrounding context.
 
-- **Build a staging environment.** Today, "rebuild" means rebuilding
+- ~~**Build a staging environment.**~~ Landed 2026-05-06 as Phase
+  4.5 of the v1.5 rollout (see `docs/staging_environment.md` and
+  `docs/fr_v15_incremental.md`). Original entry preserved below for
+  history.
+
+  Today, "rebuild" means rebuilding
   the live container; the only safety net is `tools/smoke_test.sh`
   catching regressions after the fact, with a manual image re-tag
   before each rebuild as a workaround snap-back. A real staging
