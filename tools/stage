@@ -21,6 +21,10 @@
 #                        --force re-provisions regardless of existing state.
 #   deploy [ref]         git pull (or checkout <ref>), rebuild image,
 #                        restart stack, wait for tunnel
+#   promote <tag>        Promote prod to <tag>: fetch tags in $PROD_DIR,
+#                        checkout -B deploy <tag>, rebuild + restart
+#                        prod stack, wait for tunnel. Tag must already
+#                        exist on origin.
 #   help                 Print this message
 
 set -u
@@ -186,6 +190,95 @@ cmd_deploy() {
     echo "    tools/stage smoke    # see TODO — host-side smoke is currently broken"
 }
 
+cmd_promote() {
+    local tag="${1:-}"
+    if [[ -z "$tag" ]]; then
+        die "usage: tools/stage promote <tag>  (e.g. v1.5.2)"
+    fi
+
+    # Source the deploy config to find $PROD_DIR. Same file used by
+    # bootstrap-host.sh and sync-secrets.sh.
+    local config_file="$REPO_ROOT/tools/.deploy-config"
+    [[ -f "$config_file" ]] || die "$config_file missing — run from a host with a populated tools/.deploy-config"
+    # shellcheck disable=SC1090
+    source "$config_file"
+    [[ -n "${PROD_DIR:-}" ]] || die "PROD_DIR not set in $config_file"
+    [[ -d "$PROD_DIR" ]] || die "PROD_DIR ($PROD_DIR) doesn't exist on this host"
+    [[ -f "$PROD_DIR/.env" ]] || die "$PROD_DIR/.env missing — run tools/sync-secrets.sh first"
+
+    echo "→ fetching tags in $PROD_DIR"
+    git -C "$PROD_DIR" fetch --tags
+
+    if ! git -C "$PROD_DIR" rev-parse --verify --quiet "refs/tags/$tag" >/dev/null; then
+        die "tag '$tag' not found after fetch — was it pushed to origin?"
+    fi
+
+    # Warn if the tag's commit isn't on staging-current. Trust-but-warn
+    # per docs/staging_environment.md "Decisions made → Promote".
+    local staging_head
+    staging_head=$(git -C "$REPO_ROOT" rev-parse --verify --quiet staging-current 2>/dev/null || true)
+    local tag_commit
+    tag_commit=$(git -C "$PROD_DIR" rev-parse "$tag^{commit}")
+    if [[ -n "$staging_head" && "$staging_head" != "$tag_commit" ]]; then
+        echo
+        echo "WARNING: tag $tag (commit $(git -C "$PROD_DIR" rev-parse --short "$tag"))"
+        echo "         does not match staging-current ($(git -C "$REPO_ROOT" rev-parse --short staging-current))."
+        echo "         You may be promoting code that wasn't verified on staging."
+        if [[ "${2:-}" != "--yes" ]]; then
+            read -rp "Continue anyway? [y/N] " confirm
+            case "$confirm" in
+                y|Y) ;;
+                *) echo "aborted"; exit 1 ;;
+            esac
+        fi
+    fi
+
+    echo
+    echo "→ checkout -B deploy $tag in $PROD_DIR"
+    git -C "$PROD_DIR" checkout -B deploy "$tag"
+
+    echo
+    echo "→ docker compose build + up (prod). With bind-mounted backend,"
+    echo "  Python code applies on restart; --build catches any image"
+    echo "  layer changes (Dockerfile, requirements.txt)."
+    docker compose \
+        --env-file "$PROD_DIR/.env" \
+        -f "$PROD_DIR/docker-compose.yaml" \
+        -p stra2us-prod \
+        up -d --build
+
+    echo
+    echo "→ waiting for cloudflared (prod) to register all 4 connections..."
+    local elapsed=0
+    while (( elapsed < 60 )); do
+        if docker compose -p stra2us-prod logs --tail 100 cloudflared 2>/dev/null | grep -q "connIndex=3"; then
+            echo "  tunnel ready"
+            break
+        fi
+        sleep 2
+        elapsed=$((elapsed + 2))
+        printf "."
+    done
+    if (( elapsed >= 60 )); then
+        echo
+        echo "WARNING: tunnel did not register all 4 connections within 60s"
+        echo "         Check: docker compose -p stra2us-prod logs cloudflared"
+    fi
+
+    echo
+    echo "✓ Prod promoted to $tag."
+    echo
+    echo "Verify (from a LAN dev box, not this host):"
+    echo "    ( set -a && source .env && tools/smoke_test.sh )"
+    echo "Then UI eyeball: https://stra2us.austindavid.com/admin/"
+    echo
+    echo "Rollback (if needed): docker tag stra2us-stra2us-iot:pre-${tag} \\"
+    echo "                          stra2us-stra2us-iot:latest"
+    echo "                      docker compose -p stra2us-prod up -d"
+    echo "                      (only works if you tagged the previous"
+    echo "                      image before this promote)"
+}
+
 cmd_seed_users() {
     require_env_file
 
@@ -262,6 +355,7 @@ case "$1" in
     smoke)         shift; cmd_smoke "$@" ;;
     seed-users)    shift; cmd_seed_users "$@" ;;
     deploy)        shift; cmd_deploy "$@" ;;
+    promote)       shift; cmd_promote "$@" ;;
     help|-h|--help) cmd_help ;;
     *)             err "unknown subcommand: $1"; cmd_help; exit 1 ;;
 esac
