@@ -34,6 +34,13 @@
                 <li><a href="#" data-target="logs">Activity Logs</a></li>
                 <li class="nav-superuser"><a href="#" data-target="backup">Backup / Restore</a></li>
             </ul>
+            <!-- Sign out — navigates to /admin/logout which clears
+                 cookies and busts the browser's Basic Auth cache by
+                 returning 401 with a different realm. No data-target,
+                 so the in-page nav handler ignores it. -->
+            <div class="sidebar-footer">
+                <a href="/admin/logout" class="sidebar-signout">Sign out</a>
+            </div>
         </nav>
 
         <!-- Main Content Area -->

@@ -685,3 +685,20 @@ tr.catalog-var-row:hover td { background: rgba(0, 240, 255, 0.06); }
 .security-banner.severity-error .security-banner-icon {
     color: var(--accent-danger);
 }
+
+/* --- Sidebar sign-out --------------------------------------------- */
+.sidebar { display: flex; flex-direction: column; }
+.sidebar-footer {
+    margin-top: auto;       /* push to bottom of flex column */
+    padding: 12px 18px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+.sidebar-signout {
+    display: block;
+    color: var(--text-muted, #888);
+    text-decoration: none;
+    font-size: 0.9rem;
+}
+.sidebar-signout:hover {
+    color: var(--accent-blue);
+}

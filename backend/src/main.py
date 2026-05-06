@@ -60,6 +60,10 @@ def _path_needs_admin_auth(path: str) -> bool:
         return False  # OAuth login/callback/unauthorized must be reachable
                       # without a session — that's their whole purpose.
                       # See fr_v15_auth.md.
+    if path == "/admin/logout":
+        return False  # Logout must always work, even with a corrupted
+                      # session cookie — otherwise you can't escape a
+                      # broken state without clearing cookies manually.
     if path.startswith("/admin") or path.startswith("/api/admin"):
         return True
     if path == "/app" or path == "/app/":
@@ -240,6 +244,34 @@ app.include_router(admin_router, prefix="/api/admin", tags=["admin"])
 
 # Device API
 app.include_router(device_router, tags=["device"])
+
+# Logout endpoint. Registered BEFORE the /admin static mount so this
+# route wins path resolution. Clears all session/oauth cookies and
+# busts the browser's cached Basic Auth credentials by responding 401
+# with a *different* WWW-Authenticate realm than the live one
+# ("logged-out" vs "Admin Area"). Chrome / Firefox / Safari treat
+# realm changes as "discard cached credentials," which is otherwise
+# only achievable by quitting the browser entirely.
+@app.get("/admin/logout", include_in_schema=False)
+async def admin_logout(request: Request):
+    body = (
+        "Signed out.\n\n"
+        "To sign in again, navigate to /admin/.\n"
+    )
+    response = Response(
+        status_code=401,
+        headers={"WWW-Authenticate": 'Basic realm="logged-out"'},
+        content=body,
+        media_type="text/plain",
+    )
+    # Path="/" matches how the OAuth callback (and the Basic Auth path)
+    # set these. Without an explicit path, delete_cookie wouldn't
+    # match the OAuth-issued cookies.
+    response.delete_cookie("admin_session", path="/")
+    response.delete_cookie("oauth_state", path="/")
+    response.delete_cookie("oauth_redirect_to", path="/")
+    return response
+
 
 # Mount Static UI
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
