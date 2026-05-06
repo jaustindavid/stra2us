@@ -14,14 +14,12 @@
   locally via `tools/tests/test_bootstrap_seed.sh` for the file
   side; staging integration confirms the Redis side.
 
-- **Add smoke-test coverage for `/api/admin/security_warnings`.**
-  Currently `tools/smoke_test.sh` doesn't exercise the new
-  security-warnings endpoint. Easy add to the existing activity-log
-  block (which already does Basic auth): an authenticated GET to
-  `/api/admin/security_warnings` should return 200 with a JSON body
-  containing a `warnings` array. Catches future regressions where
-  the endpoint disappears or starts erroring. Lower priority; not
-  blocking.
+- ~~**Add smoke-test coverage for `/api/admin/security_warnings`.**~~
+  Done 2026-05-06. New `[security warnings endpoint]` block in
+  `tools/smoke_test.sh` after the activity-log section: authenticated
+  GET, asserts 200 + `warnings` array shape, reports the count
+  informationally without asserting the contents (deployment-state
+  observation, not a regression).
 
 - **Revisit backup/restore — provide a way to dump an entire app.**
   The existing `/api/admin/keys/backup` only exports client
@@ -45,25 +43,22 @@
   (HMAC secrets, OAuth tokens) keeps the existing "treat like a
   password manager export" warnings.
 
-- **Fix or retire host-side smoke test runs.** Confirmed during
-  the v1.5 prod cutover: the smoke test **does not work** when run
-  from the container host — device-hostname checks return 503s
-  even when the deployment is fully healthy and the same smoke
-  test from a dev machine on the LAN comes back 9/9 green. Root
-  cause unknown; not a timing issue (it's reproducible and stable,
-  not flaky). Likely candidates: something about
-  loopback-via-public-hostname when both endpoints resolve to a
-  local IP; Synology's port-forward / hairpin NAT behavior; or a
-  curl/networking quirk specific to the container host. Decide:
-  1. **Fix it** — diagnose what's actually happening (tcpdump,
-     curl -v, etc.) and patch the smoke test or the host config.
-  2. **Retire host-side runs** — document smoke as a "run from a
-     LAN dev box, never from the container host" tool. Remove or
-     repurpose `tools/stage smoke` (perhaps make it ssh-invoke
-     from the dev machine instead).
-  Currently working around by running smoke from dev. Acceptable
-  short-term, not OK long-term — the closer to prod the verifier
-  runs, the better the signal.
+- ~~**Fix or retire host-side smoke test runs.**~~ Fixed
+  2026-05-06. Root cause: Synology's squid proxy was transparently
+  intercepting outbound HTTP from the host and trying to hairpin
+  on its own (which doesn't work). Two-part fix:
+  1. **`tools/smoke_test.sh`** now wraps every curl invocation
+     with `--noproxy '*' --max-time 10`, making the smoke test
+     proxy-independent regardless of the operator's environment.
+  2. **`--skip-device` flag** retained as a fallback for any
+     network where the hairpin path genuinely doesn't work.
+  Verified 9/9 from the container host with squid disabled in
+  Synology network settings. Manual curl from host can still be
+  flaky against the public hostname (likely persistent iptables
+  interception that survives the squid toggle), but the smoke
+  test gets through reliably with the baked-in `--noproxy '*'`.
+  `tools/stage smoke --skip-device` retained for any env where
+  hairpin truly fails.
 
 - ~~**Revisit top-level README for freestanding-repo visibility.**~~
   Trimmed 2026-05-06: license + status notes added near top, long
@@ -153,7 +148,9 @@
   device path (the realm change busts Chrome's Basic Auth cache,
   which is otherwise un-clearable without quitting the browser).
 
-- **`tools/stage nuke` — reset staging Redis + re-seed.** Today
+- **`tools/stage nuke` — reset staging Redis + re-seed.** *(Deferred:
+  build this when a real schema-incompatible change forces the issue,
+  not speculatively. Today's persistent staging state is fine.)* Today
   staging Redis state persists across deploys (intentional —
   preserves provisioned clients, logs, ACLs between test cycles).
   When a schema change lands that's incompatible with the previous
@@ -162,8 +159,9 @@
   removes the `redis_data_staging` volume, brings staging back up,
   and re-runs `tools/stage seed-users`. Confirms with the operator
   before destroying state (no `--yes` shortcut by default; staging
-  data is sometimes painful to recreate). Not needed today — filing
-  so it exists when we hit the first incompatible schema change.
+  data is sometimes painful to recreate). Filing so it exists when
+  the trigger arrives — but build it then, not now, because the
+  shape will be informed by the actual incompatibility.
 
 - **Synthetic device-traffic CLI for staging top-up.** A short-lived
   job that posts signed device traffic to a target host for a

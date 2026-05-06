@@ -155,13 +155,19 @@ cmd_smoke() {
     require_env_file
     echo "→ running smoke test against staging hostnames"
     # `set -a` auto-exports anything sourced; isolated to a subshell.
+    # Forwards any flags (e.g. --skip-device, --quick) on to
+    # smoke_test.sh. Reminder: device-host checks don't work
+    # reliably from the container host itself (Synology hairpin NAT
+    # / loopback issue) — pass --skip-device when running on the
+    # host, or run smoke from a LAN dev box. See TODO.md and the
+    # smoke_test.sh header.
     (
         set -a
         source "$STAGING_ENV_FILE"
         STRA2US_BROWSER_HOST="$STAGING_BROWSER_HOST" \
         STRA2US_DEVICE_HOST="$STAGING_DEVICE_HOST" \
         STRA2US_DEVICE_PORT="$STAGING_DEVICE_PORT" \
-        "$REPO_ROOT/tools/smoke_test.sh"
+        "$REPO_ROOT/tools/smoke_test.sh" "$@"
     )
 }
 

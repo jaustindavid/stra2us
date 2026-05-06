@@ -18,8 +18,15 @@
 #       activity-log check runs against /api/admin/logs to confirm
 #       a recent device heartbeat. Skipped when unset.
 #
-# Usage: tools/smoke_test.sh [--quick]
-#   --quick: skip checks that require credentials.
+# Usage: tools/smoke_test.sh [--quick] [--skip-device]
+#   --quick:        skip checks that require credentials
+#   --skip-device:  skip checks against the device hostname. Use when
+#                   running smoke from the container host itself —
+#                   hairpin NAT / loopback issues on Synology routers
+#                   make device-host-from-host requests unreliable.
+#                   The browser-host checks (which exercise most of
+#                   the same code paths via the CF tunnel) still run.
+#                   Smoke from a LAN dev box doesn't need this flag.
 #
 # ---------------------------------------------------------------------
 # One-time setup: creating the smoke-test user
@@ -62,7 +69,13 @@ BROWSER_BASE="https://${BROWSER_HOST}"
 DEVICE_BASE="http://${DEVICE_HOST}:${DEVICE_PORT}"
 
 QUICK=0
-[[ "${1:-}" == "--quick" ]] && QUICK=1
+SKIP_DEVICE=0
+for arg in "$@"; do
+    case "$arg" in
+        --quick)        QUICK=1 ;;
+        --skip-device)  SKIP_DEVICE=1 ;;
+    esac
+done
 
 PASS=0
 FAIL=0
@@ -89,9 +102,19 @@ report() {
     esac
 }
 
+# All curl invocations bypass any configured HTTP proxy. The smoke
+# test exercises specific hostnames; if an operator's environment has
+# http_proxy set (e.g. squid on a Synology), curl would route through
+# the proxy by default and the proxy would try to fetch the URL on
+# our behalf — which means proxy-side NAT issues, proxy caching, and
+# proxy-side auth all become failure modes that have nothing to do
+# with the deployment under test. --noproxy '*' takes those out of
+# the picture without disturbing the operator's normal proxy use.
+CURL="curl --noproxy *"
+
 # Run a curl that returns just the HTTP status code.
 http_code() {
-    curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$@"
+    $CURL -s -o /dev/null -w "%{http_code}" --max-time 10 "$@"
 }
 
 # Run a curl, capture status + a header value (case-insensitive header name).
@@ -100,7 +123,7 @@ http_status_header() {
     local header="$1" url="$2"
     shift 2
     local resp
-    resp=$(curl -s -D - -o /dev/null --max-time 10 "$@" "$url")
+    resp=$($CURL -s -D - -o /dev/null --max-time 10 "$@" "$url")
     local code header_val
     # Use the LAST status line (HTTP/...) — with HTTP/2 + CF, there
     # can be 1xx informational responses (103 Early Hints, etc.)
@@ -123,8 +146,12 @@ echo
 echo "[health]"
 code=$(http_code "${BROWSER_BASE}/health")
 [[ "$code" == "200" ]] && report "browser /health"  ok   "200" || report "browser /health"  fail "got $code"
-code=$(http_code "${DEVICE_BASE}/health")
-[[ "$code" == "200" ]] && report "device /health"   ok   "200" || report "device /health"   fail "got $code"
+if (( SKIP_DEVICE )); then
+    report "device /health"   skip "--skip-device"
+else
+    code=$(http_code "${DEVICE_BASE}/health")
+    [[ "$code" == "200" ]] && report "device /health"   ok   "200" || report "device /health"   fail "got $code"
+fi
 
 echo
 echo "[admin auth — browser host redirects to OAuth, device host htpasswd (rescue)]"
@@ -139,12 +166,16 @@ else
 fi
 # Device host: still htpasswd. This is the rescue path — it must NOT
 # break when the browser-host OAuth redirect is in effect.
-res=$(http_status_header "www-authenticate" "${DEVICE_BASE}/admin/")
-code="${res%%|*}"; auth="${res##*|}"
-if [[ "$code" == "401" && "$auth" == Basic* ]]; then
-    report "device /admin/ → 401 Basic (rescue)" ok "$auth"
+if (( SKIP_DEVICE )); then
+    report "device /admin/ → 401 Basic (rescue)" skip "--skip-device"
 else
-    report "device /admin/ → 401 Basic (rescue)" fail "code=$code auth='$auth'"
+    res=$(http_status_header "www-authenticate" "${DEVICE_BASE}/admin/")
+    code="${res%%|*}"; auth="${res##*|}"
+    if [[ "$code" == "401" && "$auth" == Basic* ]]; then
+        report "device /admin/ → 401 Basic (rescue)" ok "$auth"
+    else
+        report "device /admin/ → 401 Basic (rescue)" fail "code=$code auth='$auth'"
+    fi
 fi
 
 echo
@@ -156,12 +187,16 @@ if [[ "$code" == "302" && "$loc" == https://accounts.google.com/* ]]; then
 else
     report "browser /oauth/google/login → Google" fail "code=$code loc='$loc'"
 fi
-res=$(http_status_header "location" "${DEVICE_BASE}/oauth/google/login")
-code="${res%%|*}"; loc="${res##*|}"
-if [[ "$code" == "302" && "$loc" == https://accounts.google.com/* ]]; then
-    report "device /oauth/google/login → Google"  ok "302 → ${loc:0:60}..."
+if (( SKIP_DEVICE )); then
+    report "device /oauth/google/login → Google"  skip "--skip-device"
 else
-    report "device /oauth/google/login → Google"  fail "code=$code loc='$loc'"
+    res=$(http_status_header "location" "${DEVICE_BASE}/oauth/google/login")
+    code="${res%%|*}"; loc="${res##*|}"
+    if [[ "$code" == "302" && "$loc" == https://accounts.google.com/* ]]; then
+        report "device /oauth/google/login → Google"  ok "302 → ${loc:0:60}..."
+    else
+        report "device /oauth/google/login → Google"  fail "code=$code loc='$loc'"
+    fi
 fi
 
 # Callback without code/state → handler returns 400 (state mismatch).
@@ -183,7 +218,7 @@ if [[ $QUICK -eq 0 && -n "${SMOKE_ADMIN_USER:-}" && -n "${SMOKE_ADMIN_PASS:-}" ]
     echo "[activity log — recent device heartbeat]"
     # Capture status + body in one call. Body to a temp, status from -w.
     body_file=$(mktemp)
-    code=$(curl -s --max-time 10 \
+    code=$($CURL -s --max-time 10 \
         -u "${SMOKE_ADMIN_USER}:${SMOKE_ADMIN_PASS}" \
         -o "$body_file" \
         -w "%{http_code}" \
@@ -227,6 +262,42 @@ else
     echo
     echo "[activity log]"
     report "device heartbeat in last 60s" skip "--quick passed"
+fi
+
+# --- security warnings (optional, requires creds) --------------------
+# Confirms /api/admin/security_warnings returns 200 with a `warnings`
+# array. The endpoint surfaces things like "rescue user is on default
+# password"; smoke just verifies the endpoint is reachable + shaped
+# right. Does NOT assert the content of the warnings array — that's a
+# deployment-state observation, not a regression.
+
+if [[ $QUICK -eq 0 && -n "${SMOKE_ADMIN_USER:-}" && -n "${SMOKE_ADMIN_PASS:-}" ]]; then
+    echo
+    echo "[security warnings endpoint]"
+    body_file=$(mktemp)
+    code=$($CURL -s --max-time 10 \
+        -u "${SMOKE_ADMIN_USER}:${SMOKE_ADMIN_PASS}" \
+        -o "$body_file" \
+        -w "%{http_code}" \
+        "${BROWSER_BASE}/api/admin/security_warnings")
+    body=$(cat "$body_file")
+    rm -f "$body_file"
+
+    if [[ "$code" != "200" ]]; then
+        report "/api/admin/security_warnings reachable" fail \
+            "HTTP $code — body: ${body:0:120}"
+    elif ! printf "%s" "$body" | grep -q '"warnings"[[:space:]]*:[[:space:]]*\['; then
+        report "/api/admin/security_warnings reachable" fail \
+            "200 but body missing 'warnings' array — body: ${body:0:120}"
+    else
+        # Count warnings just for visibility (informational, not asserted).
+        n=$(printf "%s" "$body" | grep -oE '"id"[[:space:]]*:' | wc -l | tr -d ' ')
+        report "/api/admin/security_warnings reachable" ok "200, ${n} warning(s)"
+    fi
+elif [[ $QUICK -eq 0 ]]; then
+    echo
+    echo "[security warnings endpoint]"
+    report "/api/admin/security_warnings reachable" skip "SMOKE_ADMIN_USER/SMOKE_ADMIN_PASS not set"
 fi
 
 # --- summary ---------------------------------------------------------
