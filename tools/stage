@@ -1,0 +1,190 @@
+#!/usr/bin/env bash
+# tools/stage — staging-environment helper. Wraps the docker-compose
+# invocations + smoke-test integration so the operator runs one
+# command instead of remembering --env-file, -f, -p, and which
+# hostname overrides each subcommand needs.
+#
+# See docs/staging_environment.md for the surrounding architecture.
+#
+# Usage: tools/stage <subcommand> [args]
+#
+# Subcommands:
+#   up                   Bring up the staging stack
+#   down                 Stop and remove staging containers (volumes preserved)
+#   bash [service]       Shell into a staging container (default: stra2us-iot-staging)
+#   logs [service]       Tail logs (default: all services)
+#   status               Show staging container states
+#   wait-tunnel          Poll cloudflared logs until 4 connections register
+#   smoke                Run smoke test against staging hostnames
+#   seed-users           Provision the smoke + admin + OAuth seed users (idempotent)
+#   help                 Print this message
+
+set -u
+
+# Resolve repo root regardless of where the script is invoked from.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$REPO_ROOT"
+
+STAGING_COMPOSE="docker-compose.staging.yaml"
+STAGING_ENV_FILE=".env.staging"
+STAGING_PROJECT="stra2us-staging"
+STAGING_BACKEND_SERVICE="stra2us-iot-staging"
+STAGING_TUNNEL_SERVICE="cloudflared-staging"
+
+# Hostnames the smoke test should target on staging. Per
+# docs/staging_environment.md.
+STAGING_BROWSER_HOST="staging.stra2us.austindavid.com"
+STAGING_DEVICE_HOST="iot-staging.stra2us.austindavid.com"
+STAGING_DEVICE_PORT="8253"
+
+# --- helpers ---------------------------------------------------------
+
+err() { printf "stage: %s\n" "$*" >&2; }
+die() { err "$*"; exit 1; }
+
+# Wrapper for docker compose against the staging stack — captures all
+# the flags that would otherwise be retyped.
+dcs() {
+    docker compose \
+        --env-file "$STAGING_ENV_FILE" \
+        -f "$STAGING_COMPOSE" \
+        -p "$STAGING_PROJECT" \
+        "$@"
+}
+
+require_env_file() {
+    [[ -f "$STAGING_ENV_FILE" ]] || die "$STAGING_ENV_FILE missing — see docs/staging_environment.md sub-task 3d"
+}
+
+# --- subcommands -----------------------------------------------------
+
+cmd_help() {
+    sed -n '2,18p' "$0" | sed 's/^# \?//'
+}
+
+cmd_up() {
+    require_env_file
+    echo "→ docker compose up -d (staging)"
+    dcs up -d --build
+    echo
+    echo "Stack started. Wait for tunnel readiness with: tools/stage wait-tunnel"
+}
+
+cmd_down() {
+    echo "→ docker compose down (staging) — volumes preserved"
+    dcs down
+}
+
+cmd_bash() {
+    local service="${1:-$STAGING_BACKEND_SERVICE}"
+    dcs exec "$service" bash
+}
+
+cmd_logs() {
+    if [[ $# -gt 0 ]]; then
+        dcs logs --tail 200 -f "$@"
+    else
+        dcs logs --tail 200 -f
+    fi
+}
+
+cmd_status() {
+    echo "== staging containers =="
+    dcs ps
+    echo
+    echo "== last-deployed ref =="
+    if git rev-parse --verify --quiet staging-current >/dev/null 2>&1; then
+        printf "branch: staging-current → %s\n" "$(git rev-parse --short staging-current)"
+        git log -1 --pretty=format:"  %h %s (%cr)" staging-current
+        echo
+    else
+        echo "  (no staging-current branch yet — run: tools/stage deploy <ref>)"
+    fi
+}
+
+cmd_wait_tunnel() {
+    echo "→ waiting for cloudflared-staging to register all 4 connections..."
+    local elapsed=0
+    local timeout=60
+    while (( elapsed < timeout )); do
+        if dcs logs --tail 100 "$STAGING_TUNNEL_SERVICE" 2>/dev/null | grep -q "connIndex=3"; then
+            echo "tunnel ready (4 connections registered)"
+            return 0
+        fi
+        sleep 2
+        elapsed=$((elapsed + 2))
+        printf "."
+    done
+    echo
+    err "tunnel did not register all 4 connections within ${timeout}s"
+    err "check: tools/stage logs $STAGING_TUNNEL_SERVICE"
+    return 1
+}
+
+cmd_smoke() {
+    require_env_file
+    echo "→ running smoke test against staging hostnames"
+    # `set -a` auto-exports anything sourced; isolated to a subshell.
+    (
+        set -a
+        source "$STAGING_ENV_FILE"
+        STRA2US_BROWSER_HOST="$STAGING_BROWSER_HOST" \
+        STRA2US_DEVICE_HOST="$STAGING_DEVICE_HOST" \
+        STRA2US_DEVICE_PORT="$STAGING_DEVICE_PORT" \
+        "$REPO_ROOT/tools/smoke_test.sh"
+    )
+}
+
+cmd_seed_users() {
+    require_env_file
+    echo "→ seeding staging users (idempotent)"
+
+    # SMOKE user — htpasswd + wildcard ACL. Password sourced from
+    # SMOKE_ADMIN_PASS in .env.staging if set, else prompted.
+    local smoke_pass
+    if grep -q '^SMOKE_ADMIN_PASS=' "$STAGING_ENV_FILE"; then
+        smoke_pass=$(grep '^SMOKE_ADMIN_PASS=' "$STAGING_ENV_FILE" | cut -d= -f2- | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")
+    else
+        read -rsp "Password for staging 'smoke' user: " smoke_pass; echo
+    fi
+    (cd backend && python3 create_admin.py smoke "$smoke_pass")
+    dcs exec "$STAGING_BACKEND_SERVICE" redis-cli SET \
+        'admin_acls:smoke' '{"permissions":[{"prefix":"*","access":"rw"}]}'
+
+    # ADMIN user — htpasswd + wildcard ACL. Rescue path on iot-staging.
+    local admin_pass
+    read -rsp "Password for staging 'admin' user (rescue path): " admin_pass; echo
+    (cd backend && python3 create_admin.py admin "$admin_pass")
+    dcs exec "$STAGING_BACKEND_SERVICE" redis-cli SET \
+        'admin_acls:admin' '{"permissions":[{"prefix":"*","access":"rw"}]}'
+
+    # OAUTH user — wildcard ACL only (auth comes from Google).
+    local oauth_email
+    read -rp "Google email for staging OAuth user: " oauth_email
+    dcs exec "$STAGING_BACKEND_SERVICE" redis-cli SET \
+        "admin_acls:$oauth_email" '{"permissions":[{"prefix":"*","access":"rw"}]}'
+
+    echo
+    echo "Seed users provisioned:"
+    echo "  smoke (htpasswd + wildcard ACL)"
+    echo "  admin (htpasswd + wildcard ACL — rescue path)"
+    echo "  $oauth_email (OAuth + wildcard ACL)"
+}
+
+# --- dispatch --------------------------------------------------------
+
+[[ $# -ge 1 ]] || { cmd_help; exit 1; }
+
+case "$1" in
+    up)            shift; cmd_up "$@" ;;
+    down)          shift; cmd_down "$@" ;;
+    bash)          shift; cmd_bash "$@" ;;
+    logs)          shift; cmd_logs "$@" ;;
+    status)        shift; cmd_status "$@" ;;
+    wait-tunnel)   shift; cmd_wait_tunnel "$@" ;;
+    smoke)         shift; cmd_smoke "$@" ;;
+    seed-users)    shift; cmd_seed_users "$@" ;;
+    help|-h|--help) cmd_help ;;
+    *)             err "unknown subcommand: $1"; cmd_help; exit 1 ;;
+esac

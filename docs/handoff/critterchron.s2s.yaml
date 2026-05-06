@@ -1,0 +1,158 @@
+# critterchron — Stra2us KV catalog.
+#
+# Describes the tunable variables this app exposes through Stra2us. NOT a
+# code generator — the C++ source (hal/particle/src/) is the truth for
+# what the device actually reads; this file is the human-readable catalog
+# tooling uses for `list / show / set / validate / publish`.
+#
+# Authoritative rule for the on-device resolution order is in
+# hal/particle/src/Stra2usClient.cpp: first `<app>/<device>/<key>`, then
+# `<app>/<key>`, then the compiled-in default. Absent keys fall through;
+# **never** materialize placeholder entries to "pre-register" a key — an
+# empty-string placeholder wins the probe at device scope and breaks
+# fallback. See stra2us-cli (`pip install stra2us-cli` from the stra2us
+# repo `tools/` dir) for the CLI that reads this file.
+#
+# `type` / `default` drift between this file and the C++ get_int /
+# get_float call sites is enforced by test_s2s_catalog.py. When adding a
+# new knob to the device, add its entry here in the same commit.
+#
+# Schema reference: stra2us/docs/catalog_spec.md
+
+app: critterchron
+
+# Scope legend:
+#   app     — `<app>/<key>`           — fleet-wide default for this key
+#   device  — `<app>/<device>/<key>`  — per-unit override
+# Most knobs list both; some (the IR pointer) only make sense at one.
+
+vars:
+  # ---------- telemetry cadence ----------
+
+  heartbeep:
+    type: int
+    default: 300
+    scope: [app, device]
+    range: [10, 3600]
+    help: |
+      Stra2us heartbeat cadence in seconds. Device reads this once per loop
+      iteration and adjusts in-place. Per-device headers may override the
+      compiled-in default (e.g. ricky_raccoon.h pegs it to 15 for dev).
+
+  cloud_heartbeep:
+    type: int
+    default: 300
+    scope: [app, device]
+    range: [10, 3600]
+    help: |
+      Particle cloud heartbeat cadence (independent of Stra2us). Separate so
+      broken Stra2us can't silence the observability path — answers "server
+      down or device misconfigured?" from the Particle event stream alone.
+
+  # ---------- OTA IR ----------
+
+  ir:
+    type: string
+    scope: [device]
+    help: |
+      Script name this device should run (e.g. "thyme"). Empty string
+      = "keep current, boot into compiled-in default on next reset." Not
+      app-scoped: pointing every device in the fleet at one script would
+      ignore per-device grid geometry (rachel 32x8 vs ricky 16x16 vs rico
+      8x8). Managed by tools/set_ir_pointer.py.
+    ops_only: true    # device never calls get_*; read by Stra2usClient directly
+
+  ir_poll_interval:
+    type: int
+    default: 1200
+    scope: [app, device]
+    range: [30, 86400]
+    help: |
+      Seconds between ir_poll cycles. Decoupled from heartbeep because
+      pointer changes propagate at human scale. Short values (< 60s) are
+      fine for dev; in production the traffic is "one sidecar GET per
+      device per interval" so 1200s is the sweet spot.
+
+  # ---------- WobblyTime ----------
+
+  wobble_min_seconds:
+    type: int
+    default: 120
+    scope: [app, device]
+    range: [10, 3600]
+    help: Lower bound (seconds) on each wobble phase. Phase duration is
+      uniform-random in [min, max] per roll.
+
+  wobble_max_seconds:
+    type: int
+    default: 300
+    scope: [app, device]
+    range: [10, 3600]
+    help: Upper bound (seconds) on each wobble phase. Must be >= min;
+      device does not range-check.
+
+  wobble_fast_rate:
+    type: float
+    default: 1.3
+    scope: [app, device]
+    range: [0.5, 5.0]
+    help: Time multiplier during a "fast" wobble phase. 1.0 = real time.
+
+  wobble_slow_rate:
+    type: float
+    default: 0.7
+    scope: [app, device]
+    range: [0.1, 1.0]
+    help: Time multiplier during a "slow" wobble phase. 1.0 = real time.
+
+  # ---------- Light sensor + brightness ----------
+
+  light_exponent:
+    type: float
+    default: 2.5
+    scope: [app, device]
+    range: [1.0, 5.0]
+    help: |
+      Exponent on normalized light reading before mapping to brightness.
+      Higher = darker mid-range (stronger perceived dimming in twilight).
+
+  min_brightness:
+    type: int
+    default_per_device: true
+    scope: [app, device]
+    range: [1, 255]
+    help: |
+      Floor on the 0-255 sink brightness. Compiled-in default is set per
+      device header (rachel=1, ricky=3, rico=32). Lint skips the
+      cross-check for keys whose default is marked per-device. Range
+      lower bound is 1, not 0: zero would turn the panel off entirely
+      and is reserved as a sentinel elsewhere (see `night_enter_brightness`).
+
+  max_brightness:
+    type: int
+    default_per_device: true
+    scope: [app, device]
+    range: [0, 255]
+    help: |
+      Ceiling on the 0-255 sink brightness. Per-device default (rachel=64,
+      ricky=128, rico=128, elk=128).
+
+  night_enter_brightness:
+    type: int
+    default_per_device: true
+    scope: [app, device]
+    range: [0, 255]
+    help: |
+      Smoothed-brightness threshold at which the night palette engages.
+      Schmitt hysteresis against `night_exit_brightness`. Defaults to
+      MIN_BRIGHTNESS (per-device), i.e. the floor-clamp regime itself.
+
+  night_exit_brightness:
+    type: int
+    default_per_device: true
+    scope: [app, device]
+    range: [0, 255]
+    help: |
+      Smoothed-brightness threshold at which the night palette disengages.
+      Device clamps to enter + 1 on read so a misconfigured pair can't
+      deadlock the trigger.

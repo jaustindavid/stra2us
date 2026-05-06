@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Find your device</title>
+    <link rel="stylesheet" href="/app/_static/styles.css?v=3">
+</head>
+<body class="app-page app-landing-page">
+    <main class="app-landing">
+        <h1>Find your device</h1>
+        <p class="hint">
+            Enter the device name printed on your unit. We'll look it up
+            and send you to the right page.
+        </p>
+
+        <form id="lookupForm" autocomplete="off" novalidate>
+            <label for="deviceName" class="label">Device name</label>
+            <input
+                type="text"
+                id="deviceName"
+                name="deviceName"
+                required
+                pattern="[A-Za-z0-9_\-]+"
+                placeholder="e.g. ricky_raccoon"
+                autofocus
+            >
+            <button type="submit" id="lookupSubmit">Continue</button>
+        </form>
+
+        <div id="lookupMessage" class="message hidden" role="status"></div>
+
+        <p class="footer-hint">
+            If you mistyped, just try again. We won't suggest similar
+            names — that can lead you to the wrong device.
+        </p>
+    </main>
+
+    <script src="/app/_static/app.js?v=7" defer></script>
+</body>
+</html>

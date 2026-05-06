@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+# tools/bootstrap-host.sh — set up the prod + staging directory layout
+# on the deploy host. Run ONCE on the host (not from dev).
+#
+# Idempotent: re-running on an already-bootstrapped host is a no-op.
+#
+# Prereqs:
+#   - tools/.deploy-config exists and is filled in
+#   - git on the host is authenticated to the configured GIT_REMOTE
+#   - docker compose is available without sudo
+#
+# What this does:
+#   - Creates PROD_DIR and STAGING_DIR (parent dirs included).
+#   - git clones GIT_REMOTE into each (skips if already a repo).
+#   - Creates the host-side volume directories under each clone.
+#   - Prints next-steps guidance for syncing secrets and seeding users.
+
+set -eu
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+CONFIG_FILE="$REPO_ROOT/tools/.deploy-config"
+
+if [[ ! -f "$CONFIG_FILE" ]]; then
+    echo "ERROR: $CONFIG_FILE not found." >&2
+    echo "Copy tools/.deploy-config.example to tools/.deploy-config and fill in values." >&2
+    exit 1
+fi
+
+# shellcheck disable=SC1090
+source "$CONFIG_FILE"
+
+# Required vars
+for v in PROD_DIR STAGING_DIR GIT_REMOTE; do
+    if [[ -z "${!v:-}" ]]; then
+        echo "ERROR: $v is empty in $CONFIG_FILE" >&2
+        exit 1
+    fi
+done
+
+echo
+echo "About to bootstrap stra2us deploy directories:"
+echo
+echo "  Prod clone:    $PROD_DIR"
+echo "  Staging clone: $STAGING_DIR"
+echo "  Git remote:    $GIT_REMOTE"
+echo
+read -rp "Looks right? [y/N] " confirm
+case "$confirm" in
+    y|Y) ;;
+    *) echo "aborted"; exit 1 ;;
+esac
+
+# --- helpers ---------------------------------------------------------
+
+clone_or_skip() {
+    local target="$1"
+    if [[ -d "$target/.git" ]]; then
+        echo "→ $target is already a git repo; skipping clone"
+    elif [[ -e "$target" ]]; then
+        echo "ERROR: $target exists but is not a git repo. Refusing to overwrite." >&2
+        exit 1
+    else
+        echo "→ cloning into $target"
+        mkdir -p "$(dirname "$target")"
+        git clone "$GIT_REMOTE" "$target"
+    fi
+}
+
+ensure_dir() {
+    local d="$1"
+    if [[ ! -d "$d" ]]; then
+        echo "→ mkdir $d"
+        mkdir -p "$d"
+    fi
+}
+
+# --- run -------------------------------------------------------------
+
+clone_or_skip "$PROD_DIR"
+clone_or_skip "$STAGING_DIR"
+
+# Volume dirs on the host. These get bind-mounted into containers per
+# the compose files. Created here so first `docker compose up` doesn't
+# accidentally create them as root-owned by docker daemon.
+ensure_dir "$PROD_DIR/firmware"
+ensure_dir "$PROD_DIR/redis_data"
+ensure_dir "$STAGING_DIR/firmware_staging"
+ensure_dir "$STAGING_DIR/redis_data_staging"
+
+cat <<EOF
+
+✓ Bootstrap complete.
+
+Next steps:
+
+1. From your DEV machine, push the host-bound secrets:
+
+     tools/sync-secrets.sh
+
+   Source files on dev (gitignore them, never source from your shell):
+     .env.host-prod     → host's $PROD_DIR/.env
+     .env.host-staging  → host's $STAGING_DIR/.env.staging
+
+   See the sync-secrets.sh header for expected contents of each.
+   The dev-side .env / .env.staging stay minimal (smoke-test creds
+   for testing deployed environments locally).
+
+2. On the HOST, in $PROD_DIR:
+
+     cd $PROD_DIR
+     # one-time: provision the prod admin htpasswd entry
+     cd backend && python3 create_admin.py admin '<chosen-password>' && cd ..
+     # bring up prod
+     docker compose up -d
+     # wait for tunnel + smoke (manual today; deploy.sh wraps later)
+
+3. On the HOST, in $STAGING_DIR:
+
+     cd $STAGING_DIR
+     tools/stage up
+     tools/stage wait-tunnel
+     tools/stage seed-users
+     tools/stage smoke
+
+EOF

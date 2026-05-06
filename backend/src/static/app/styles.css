@@ -1,0 +1,440 @@
+/* Customer-facing app view — minimal, intentionally restrained.
+   Leaves room for per-app branding (catalog YAML can grow optional
+   `brand_color`, `logo_url` fields in v2). v1 is "looks plain, doesn't
+   embarrass." */
+
+:root {
+    --bg: #f7f7f8;
+    --panel: #ffffff;
+    --text: #1a1a1c;
+    --muted: #6b6b70;
+    --border: #e3e3e6;
+    --accent: #2754c5;
+    --danger: #c53030;
+    --radius: 6px;
+}
+
+* { box-sizing: border-box; }
+
+body.app-page {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.5;
+}
+
+.app-page main {
+    max-width: 640px;
+    margin: 0 auto;
+    padding: 32px 20px;
+}
+
+/* ---- landing page ---- */
+
+.app-landing h1 { margin: 0 0 8px; font-size: 1.5rem; }
+.app-landing .hint {
+    color: var(--muted);
+    margin: 0 0 24px;
+}
+
+.app-landing form {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+}
+
+.app-landing .label {
+    font-size: 0.85rem;
+    color: var(--muted);
+}
+
+.app-landing input[type="text"] {
+    padding: 10px 12px;
+    font-size: 1rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg);
+    color: var(--text);
+}
+
+.app-landing input[type="text"]:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: -1px;
+}
+
+.app-landing button {
+    padding: 10px 16px;
+    font-size: 1rem;
+    background: var(--accent);
+    color: #fff;
+    border: 0;
+    border-radius: var(--radius);
+    cursor: pointer;
+    margin-top: 8px;
+}
+
+.app-landing button:disabled {
+    opacity: 0.5;
+    cursor: progress;
+}
+
+.app-landing .message {
+    margin-top: 12px;
+    padding: 10px 12px;
+    border-radius: var(--radius);
+    font-size: 0.9rem;
+}
+.app-landing .message.error {
+    background: #fdecea;
+    color: var(--danger);
+    border: 1px solid #f5c2c0;
+}
+.app-landing .message.info {
+    background: #e8eef9;
+    color: var(--accent);
+    border: 1px solid #c5d4ee;
+}
+.app-landing .message.hidden { display: none; }
+
+.app-landing .footer-hint {
+    color: var(--muted);
+    font-size: 0.85rem;
+    margin-top: 20px;
+}
+
+/* ---- device page ---- */
+
+.app-device .device-header {
+    margin-bottom: 24px;
+}
+.app-device .device-header h1 {
+    margin: 0 0 4px;
+    font-size: 1.6rem;
+}
+.app-device .device-status {
+    color: var(--muted);
+    font-size: 0.95rem;
+    min-height: 1.4em;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+/* Status badge — shape signals "is the device alive?". Color
+   communicates the bucket (online/recent/offline). The dot before
+   the label is for the at-a-glance scan even when the page is
+   scrolled past the label text. */
+.app-device .status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    line-height: 1.2;
+}
+.app-device .status-badge::before {
+    content: '';
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: currentColor;
+}
+.app-device .status-badge.status-loading {
+    background: #f0f0f2;
+    color: var(--muted);
+}
+.app-device .status-badge.status-online {
+    background: #e6f5ec;
+    color: #157a3a;
+}
+.app-device .status-badge.status-recent {
+    background: #fff7e0;
+    color: #8a6700;
+}
+.app-device .status-badge.status-offline {
+    background: #f0f0f2;
+    color: #555;
+}
+.app-device .status-badge.status-unknown {
+    background: #f0f0f2;
+    color: var(--muted);
+}
+.app-device .status-detail {
+    color: var(--muted);
+    font-size: 0.85rem;
+}
+
+/* ---- recent-activity tail ---- */
+
+.app-device .activity h2 {
+    font-size: 1rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    margin: 24px 0 12px;
+}
+
+.app-device .activity-row {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.9rem;
+}
+.app-device .activity-row:last-child { border-bottom: 0; }
+.app-device .activity-row .activity-when {
+    color: var(--muted);
+    font-size: 0.8rem;
+    min-width: 90px;
+    flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
+}
+.app-device .activity-row .activity-payload {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.85rem;
+    word-break: break-word;
+    color: var(--text);
+}
+.app-device .activity-empty {
+    padding: 12px 0;
+    color: var(--muted);
+    font-size: 0.9rem;
+}
+
+/* Setting-value row keeps the value text + Reveal button on one line.
+   Phase 3 introduced the Reveal button alongside the value; without
+   this they stack awkwardly. */
+.app-device .setting-card .setting-value-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.hidden { display: none !important; }
+
+.app-device .settings h2 {
+    font-size: 1rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    margin: 0 0 12px;
+}
+
+.app-device .setting-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 20px;
+    margin-bottom: 12px;
+}
+
+.app-device .setting-card .setting-label {
+    font-weight: 600;
+    margin-bottom: 4px;
+}
+.app-device .setting-card .setting-default-hint {
+    font-style: italic;
+    font-weight: 400;
+    color: var(--muted);
+    font-size: 0.85em;
+    margin-left: 6px;
+}
+.app-device .setting-card .setting-help {
+    color: var(--muted);
+    font-size: 0.85rem;
+    margin-bottom: 8px;
+}
+.app-device .setting-card .setting-value {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.95rem;
+    word-break: break-word;
+}
+.app-device .setting-card .setting-value.unset {
+    color: var(--muted);
+    font-style: italic;
+    font-family: inherit;
+}
+
+.app-device .setting-card .setting-edit {
+    margin-top: 12px;
+}
+.app-device .setting-card .setting-edit a {
+    font-size: 0.85rem;
+    color: var(--accent);
+    text-decoration: none;
+}
+.app-device .setting-card .setting-edit a:hover { text-decoration: underline; }
+
+.app-device .device-footer {
+    margin-top: 32px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+}
+
+.app-device .hint {
+    color: var(--muted);
+    font-size: 0.9rem;
+}
+
+.app-device .error {
+    background: #fdecea;
+    color: var(--danger);
+    border: 1px solid #f5c2c0;
+    border-radius: var(--radius);
+    padding: 12px 16px;
+    margin: 16px 0;
+}
+
+/* Mask state for encrypted-record inputs and read-only displays.
+   -webkit-text-security is non-standard but covers Chrome/Safari/Edge;
+   text-security is the future-spec name. The value is still in .value;
+   the mask is purely visual shoulder-surf protection. */
+.value-masked {
+    -webkit-text-security: disc;
+    text-security: disc;
+}
+
+/* Per-card Reveal button (sits next to the masked value). */
+.app-device .reveal-btn {
+    margin-left: 8px;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--accent);
+    border-radius: var(--radius);
+    padding: 2px 10px;
+    font-size: 0.8rem;
+    cursor: pointer;
+}
+.app-device .reveal-btn:hover { background: rgba(39,84,197,0.06); }
+
+/* Edit button on each card. */
+.app-device .setting-card .edit-btn {
+    margin-top: 12px;
+    padding: 6px 14px;
+    font-size: 0.85rem;
+    background: transparent;
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    border-radius: var(--radius);
+    cursor: pointer;
+}
+.app-device .setting-card .edit-btn:hover {
+    background: rgba(39,84,197,0.06);
+}
+
+/* ---- modal ---- */
+
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    z-index: 100;
+}
+.modal-overlay.hidden { display: none; }
+
+.modal-box {
+    background: var(--panel);
+    border-radius: var(--radius);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+    width: 100%;
+    max-width: 480px;
+    max-height: 90vh;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+}
+
+.modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+}
+.modal-header h2 {
+    margin: 0;
+    font-size: 1.1rem;
+}
+.modal-close {
+    background: none;
+    border: 0;
+    font-size: 1.4rem;
+    line-height: 1;
+    color: var(--muted);
+    cursor: pointer;
+    padding: 0 4px;
+}
+.modal-close:hover { color: var(--text); }
+
+.modal-body {
+    padding: 16px 20px;
+}
+.modal-body .hint { margin-top: 0; }
+.modal-body input[type="text"],
+.modal-body input[type="number"],
+.modal-body select,
+.modal-body textarea {
+    width: 100%;
+    padding: 10px 12px;
+    font-size: 1rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg);
+    color: var(--text);
+    margin-top: 8px;
+    box-sizing: border-box;
+    font-family: inherit;
+}
+.modal-body textarea {
+    resize: vertical;
+    min-height: 60px;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.95rem;
+}
+.modal-body .error.hidden { display: none; }
+.modal-body .error {
+    margin-top: 12px;
+}
+
+.modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 12px 20px;
+    border-top: 1px solid var(--border);
+}
+.btn-primary {
+    background: var(--accent);
+    color: #fff;
+    border: 0;
+    border-radius: var(--radius);
+    padding: 8px 16px;
+    font-size: 0.95rem;
+    cursor: pointer;
+}
+.btn-primary:disabled { opacity: 0.5; cursor: progress; }
+.btn-secondary {
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 8px 16px;
+    font-size: 0.95rem;
+    cursor: pointer;
+}
+.btn-secondary:hover { color: var(--text); }

@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  stra2us-iot:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: stra2us-iot
+    ports:
+      - "8153:8153"
+    volumes:
+      # Map host firmware folder for OTA binaries
+      - ./firmware:/firmware
+
+      # Map host data folder for Redis persistence
+      - ./redis_data:/data
+
+      # Map host backend folder for the application software (checked out from GitHub)
+      - ./backend:/app
+    environment:
+      - REDIS_URL=redis://localhost:6379
+      - PYTHONPATH=/app/src
+      - STRA2US_GOOGLE_OAUTH_ENABLED=1
+      - STRA2US_GOOGLE_CLIENT_ID=${STRA2US_GOOGLE_CLIENT_ID}
+      - STRA2US_GOOGLE_CLIENT_SECRET=${STRA2US_GOOGLE_CLIENT_SECRET}
+      - STRA2US_OAUTH_REDIRECT_URI=https://stra2us.austindavid.com/oauth/google/callback
+    restart: unless-stopped
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: stra2us-cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - stra2us-iot

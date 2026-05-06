@@ -1,0 +1,21 @@
+# Direct dependencies, pinned to current-stable versions as of
+# 2026-05-05. The smoke test (tools/smoke_test.sh) is the verifier
+# whenever this file changes — run it after any rebuild and confirm
+# all checks pass before treating the new pins as good.
+#
+# starlette and pydantic are NOT listed here — they're transitive
+# deps of fastapi, and listing them with a hard pin risks a
+# resolution conflict when fastapi requires a different version.
+# When the lockfile workflow lands (see fr_v15_incremental.md
+# build hygiene), exact transitive versions will be captured there.
+fastapi==0.136.1
+uvicorn==0.46.0
+redis==7.4.0
+msgpack==1.1.2
+httpx==0.28.1
+pytest==9.0.3
+# Google OAuth (v1.5 — see fr_v15_auth.md). google-auth validates
+# ID tokens against Google's JWKS; requests is the transitive dep
+# the token-exchange call uses.
+google-auth==2.50.0
+requests==2.33.1

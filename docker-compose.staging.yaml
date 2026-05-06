@@ -1,0 +1,59 @@
+version: '3.8'
+
+# Staging stack — runs alongside the prod stack on the same host.
+# Different container names, different host port, different volumes,
+# different CF tunnel. Code is baked into the image (no ./backend:/app
+# mount) so an image rebuild IS the deploy — staging never reflects
+# uncommitted host edits. See docs/staging_environment.md.
+#
+# Run via the helper script — it passes --env-file .env.staging:
+#   tools/stage up
+#   tools/stage deploy <ref>
+#
+# Or directly:
+#   docker compose --env-file .env.staging -f docker-compose.staging.yaml up -d
+
+services:
+  stra2us-iot-staging:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        # Pulls in tcpdump/telnet/dig/jq/etc. for in-container
+        # troubleshooting. See backend/Dockerfile.
+        INCLUDE_DEBUG_TOOLS: "1"
+    container_name: stra2us-iot-staging
+    ports:
+      # Host:container — host 8253 (distinct from prod's 8153) avoids
+      # any chance of accidental crossover. App inside still listens
+      # on 8153.
+      - "8253:8153"
+    volumes:
+      # Staging-only firmware + Redis state. Separate dirs from prod
+      # ensure prod data is never touched by staging deploys.
+      - ./firmware_staging:/firmware
+      - ./redis_data_staging:/data
+      # Note: NO ./backend:/app mount. Image is the source of truth on
+      # staging; rebuilding the image is the deploy step. Different
+      # discipline from prod's bind-mounted setup — intentional.
+    environment:
+      - REDIS_URL=redis://localhost:6379
+      - PYTHONPATH=/app/src
+      - STRA2US_GOOGLE_OAUTH_ENABLED=1
+      - STRA2US_GOOGLE_CLIENT_ID=${STRA2US_GOOGLE_CLIENT_ID}
+      - STRA2US_GOOGLE_CLIENT_SECRET=${STRA2US_GOOGLE_CLIENT_SECRET}
+      - STRA2US_OAUTH_REDIRECT_URI=https://staging.stra2us.austindavid.com/oauth/google/callback
+      # Tells the auth middleware which hostname is the OAuth-redirect
+      # path on this stack. Browser-host on staging is the staging CF
+      # hostname; everything else (incl. iot-staging:8253) gets
+      # htpasswd. Mirror of how prod's BROWSER_HOST works.
+      - STRA2US_BROWSER_HOST=staging.stra2us.austindavid.com
+    restart: unless-stopped
+
+  cloudflared-staging:
+    image: cloudflare/cloudflared:latest
+    container_name: stra2us-cloudflared-staging
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - stra2us-iot-staging

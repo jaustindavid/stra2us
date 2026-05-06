@@ -1,0 +1,2 @@
+[console_scripts]
+stra2us = stra2us_cli.cli:main

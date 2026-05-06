@@ -1,0 +1,108 @@
+INFO:     Started server process [21580]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:58385 - "GET /api/admin/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58388 - "POST /api/admin/keys HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:58399 - "GET /api/admin/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58402 - "POST /api/admin/keys HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58409 - "GET /api/admin/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58411 - "GET /api/admin/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58415 - "GET /api/admin/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58418 - "GET /api/admin/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58422 - "GET /api/admin/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58425 - "POST /q/sensor/data?ttl=5 HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:58436 - "GET /api/admin/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58439 - "POST /q/sensor_data?ttl=5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58447 - "GET /api/admin/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58449 - "GET /api/admin/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58453 - "GET /api/admin/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58464 - "GET /api/admin/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58464 - "GET /api/admin/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58464 - "GET /api/admin/peek/q/sensor_data HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58464 - "GET /api/admin/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58464 - "GET /api/admin/peek/q/sensor_data HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58464 - "GET /api/admin/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58464 - "GET /api/admin/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58464 - "GET /api/admin/keys HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58475 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58475 - "GET /api/admin/keys HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58475 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58475 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58475 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58475 - "GET /admin/ HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:58482 - "GET /admin/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58475 - "GET /admin/styles.css HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:58482 - "GET /api/admin/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58552 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58552 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58552 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58552 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58552 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58552 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58552 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58552 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58552 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58552 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58573 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58573 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58600 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58607 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58607 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58607 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58607 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58607 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58607 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58607 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58607 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58607 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58607 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58607 - "GET /api/admin/logs?limit=50 HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [21580]

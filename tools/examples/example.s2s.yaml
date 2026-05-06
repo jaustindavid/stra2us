@@ -1,0 +1,48 @@
+# Example Stra2us catalog. Copy to <yourapp>.s2s.yaml in your app's
+# repo root and edit to describe the KV variables your devices read.
+#
+# Schema reference: ../docs/catalog_spec.md
+# CLI usage:        ../tools/README.md
+
+app: example
+
+vars:
+  heartbeat_seconds:
+    type: int
+    default: 60
+    scope: [app, device]
+    range: [10, 3600]
+    read_cadence: loop
+    help: |
+      Seconds between device heartbeats. Device reads this once per
+      main-loop iteration.
+
+  brightness:
+    type: int
+    default: 128
+    scope: [app, device]
+    range: [0, 255]
+    format: brightness
+    help: Display brightness, 0-255.
+
+  mode:
+    type: enum
+    values: ["day", "night", "off"]
+    default: day
+    scope: [app, device]
+    help: Display mode.
+
+  debug_enabled:
+    type: bool
+    default: false
+    scope: [app, device]
+    help: Enable verbose logging to the message queue.
+
+  ota_script:
+    type: string
+    scope: [device]
+    ops_only: true
+    help: |
+      Filename of the OTA script this device should fetch on next
+      cycle. Empty string = keep current. Read by the client library,
+      not by app-level `get_string` calls — hence `ops_only: true`.

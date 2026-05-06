@@ -1,0 +1,24 @@
+# tools/.deploy-config is host-specific and MUST NOT be committed.
+#
+# Sourced by tools/sync-secrets.sh and tools/bootstrap-host.sh.
+
+# --- SSH connection details -------------------------------------------
+# DEPLOY_HOST may be a hostname, an IP, or an alias from ~/.ssh/config
+# (recommended — keeps key paths and non-standard ports out of this file).
+DEPLOY_HOST=synog.local
+DEPLOY_USER=austin
+DEPLOY_PORT=16622
+
+# --- Host paths -------------------------------------------------------
+# Absolute paths on the deploy host. Two separate clones — one for
+# prod, one for staging. Pick a volume with growth room: redis_data
+# accumulates the activity-log stream (currently capped at MAXLEN
+# 150000), firmware/ holds OTA binaries.
+PROD_DIR=/volume1/stra2us/stra2us-prod
+STAGING_DIR=/volume1/stra2us/stra2us-staging
+
+# --- Git remote -------------------------------------------------------
+# The remote the host will clone from. Same URL you use on dev.
+# Host must already be authenticated (we confirmed git push/pull work
+# from there).
+GIT_REMOTE=git@github.com:jaustindavid/stra2us.git

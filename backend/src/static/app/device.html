@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Device</title>
+    <link rel="stylesheet" href="/app/_static/styles.css?v=3">
+</head>
+<body class="app-page app-device-page">
+    <main class="app-device">
+        <header class="device-header">
+            <!-- Filled in by app.js after `/api/admin/me` and the catalog
+                 load resolve. The `Loading…` placeholder is what the
+                 customer sees for the ~100ms it takes for those fetches
+                 to come back. -->
+            <h1 id="deviceName">Loading&hellip;</h1>
+            <div class="device-status">
+                <span id="statusBadge" class="status-badge status-loading">&hellip;</span>
+                <span id="statusDetail" class="status-detail"></span>
+            </div>
+        </header>
+
+        <section class="settings">
+            <h2>Settings</h2>
+            <div id="settingsCards">
+                <p class="hint">Loading settings&hellip;</p>
+            </div>
+        </section>
+
+        <section class="activity" id="activitySection">
+            <h2>Recent activity</h2>
+            <div id="activityList">
+                <p class="hint">Loading&hellip;</p>
+            </div>
+        </section>
+
+        <footer class="device-footer">
+            <p class="hint" id="footerHint"></p>
+        </footer>
+    </main>
+
+    <!-- Edit modal — hidden by default, populated/shown by app.js on Edit
+         click. Single-input form, locked to device scope, no encrypted
+         checkbox (catalog-driven decision per FR). -->
+    <div id="editModal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="editModalTitle">
+        <div class="modal-box">
+            <header class="modal-header">
+                <h2 id="editModalTitle">Edit</h2>
+                <button type="button" class="modal-close" id="editModalClose" aria-label="Close">&times;</button>
+            </header>
+            <div class="modal-body">
+                <p id="editModalHelp" class="hint"></p>
+                <div id="editModalInputWrap"><!-- input/textarea injected here --></div>
+                <div id="editModalError" class="error hidden"></div>
+            </div>
+            <footer class="modal-footer">
+                <button type="button" class="btn-secondary" id="editModalCancel">Cancel</button>
+                <button type="button" class="btn-primary" id="editModalSave">Save</button>
+            </footer>
+        </div>
+    </div>
+
+    <!-- js-yaml for catalog YAML parsing. Same CDN + version + SRI as the
+         admin UI's index.html — keeping them aligned means any future
+         lib swap or CDN move happens once. Loaded synchronously (no
+         `defer`) so app.js can use `jsyaml.*` immediately on its own
+         DOMContentLoaded handler. ~40KB gz. If customer privacy /
+         third-party-dep concerns ever push back, self-host into
+         /app/_static/ — the API surface used (`jsyaml.load`) is small
+         and stable.  -->
+    <script src="https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js"
+            integrity="sha256-Rdw90D3AegZwWiwpibjH9wkBPwS9U4bjJ51ORH8H69c="
+            crossorigin="anonymous"></script>
+    <script src="/app/_static/app.js?v=7" defer></script>
+</body>
+</html>

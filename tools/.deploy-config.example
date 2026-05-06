@@ -1,0 +1,28 @@
+# tools/.deploy-config.example
+#
+# Copy this file to tools/.deploy-config and fill in your values.
+# tools/.deploy-config is host-specific and MUST NOT be committed.
+# Add it to .gitignore once the bootstrap TODO is worked.
+#
+# Sourced by tools/sync-secrets.sh and tools/bootstrap-host.sh.
+
+# --- SSH connection details -------------------------------------------
+# DEPLOY_HOST may be a hostname, an IP, or an alias from ~/.ssh/config
+# (recommended — keeps key paths and non-standard ports out of this file).
+DEPLOY_HOST=stra2us-host
+DEPLOY_USER=admin
+DEPLOY_PORT=22
+
+# --- Host paths -------------------------------------------------------
+# Absolute paths on the deploy host. Two separate clones — one for
+# prod, one for staging. Pick a volume with growth room: redis_data
+# accumulates the activity-log stream (currently capped at MAXLEN
+# 150000), firmware/ holds OTA binaries.
+PROD_DIR=/volume1/stra2us/stra2us-prod
+STAGING_DIR=/volume1/stra2us/stra2us-staging
+
+# --- Git remote -------------------------------------------------------
+# The remote the host will clone from. Same URL you use on dev.
+# Host must already be authenticated (we confirmed git push/pull work
+# from there).
+GIT_REMOTE=git@github.com:youruser/stra2us.git

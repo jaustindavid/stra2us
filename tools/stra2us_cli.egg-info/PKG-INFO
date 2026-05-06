@@ -1,0 +1,9 @@
+Metadata-Version: 2.4
+Name: stra2us-cli
+Version: 0.1.0
+Summary: Reference CLI for Stra2us KV catalogs.
+Requires-Python: >=3.10
+Requires-Dist: pyyaml>=6.0
+Requires-Dist: msgpack>=1.0
+Requires-Dist: requests>=2.28
+Requires-Dist: pydantic>=2.0
