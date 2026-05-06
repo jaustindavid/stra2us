@@ -100,8 +100,14 @@ http_status_header() {
     local resp
     resp=$(curl -s -D - -o /dev/null --max-time 10 "$@" "$url")
     local code header_val
-    code=$(printf "%s" "$resp" | head -1 | awk '{print $2}')
-    header_val=$(printf "%s" "$resp" | grep -i "^${header}:" | head -1 | sed -E 's/^[^:]+:[[:space:]]*//' | tr -d '\r')
+    # Use the LAST status line (HTTP/...) — with HTTP/2 + CF, there
+    # can be 1xx informational responses (103 Early Hints, etc.)
+    # before the final 2xx/3xx/4xx. head -1 would pick the early
+    # hint; tail -1 picks the final response.
+    code=$(printf "%s" "$resp" | grep -E '^HTTP/' | tail -1 | awk '{print $2}')
+    # Same logic for the header value: take the LAST occurrence,
+    # since headers like Location only appear on the final response.
+    header_val=$(printf "%s" "$resp" | grep -i "^${header}:" | tail -1 | sed -E 's/^[^:]+:[[:space:]]*//' | tr -d '\r')
     printf "%s|%s" "$code" "$header_val"
 }
 
