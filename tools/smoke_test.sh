@@ -110,11 +110,16 @@ report() {
 # proxy-side auth all become failure modes that have nothing to do
 # with the deployment under test. --noproxy '*' takes those out of
 # the picture without disturbing the operator's normal proxy use.
-CURL="curl --noproxy *"
+#
+# Stored as an array (not a string) so the literal `*` survives
+# unquoted expansion. With `CURL="curl --noproxy *"` and `$CURL` the
+# shell glob-expands `*` to filenames in cwd before curl ever sees
+# it, which leads to spectacularly broken behavior.
+CURL=(curl --noproxy '*')
 
 # Run a curl that returns just the HTTP status code.
 http_code() {
-    $CURL -s -o /dev/null -w "%{http_code}" --max-time 10 "$@"
+    "${CURL[@]}" -s -o /dev/null -w "%{http_code}" --max-time 10 "$@"
 }
 
 # Run a curl, capture status + a header value (case-insensitive header name).
@@ -123,7 +128,7 @@ http_status_header() {
     local header="$1" url="$2"
     shift 2
     local resp
-    resp=$($CURL -s -D - -o /dev/null --max-time 10 "$@" "$url")
+    resp=$("${CURL[@]}" -s -D - -o /dev/null --max-time 10 "$@" "$url")
     local code header_val
     # Use the LAST status line (HTTP/...) — with HTTP/2 + CF, there
     # can be 1xx informational responses (103 Early Hints, etc.)
@@ -218,7 +223,7 @@ if [[ $QUICK -eq 0 && -n "${SMOKE_ADMIN_USER:-}" && -n "${SMOKE_ADMIN_PASS:-}" ]
     echo "[activity log — recent device heartbeat]"
     # Capture status + body in one call. Body to a temp, status from -w.
     body_file=$(mktemp)
-    code=$($CURL -s --max-time 10 \
+    code=$("${CURL[@]}" -s --max-time 10 \
         -u "${SMOKE_ADMIN_USER}:${SMOKE_ADMIN_PASS}" \
         -o "$body_file" \
         -w "%{http_code}" \
@@ -275,7 +280,7 @@ if [[ $QUICK -eq 0 && -n "${SMOKE_ADMIN_USER:-}" && -n "${SMOKE_ADMIN_PASS:-}" ]
     echo
     echo "[security warnings endpoint]"
     body_file=$(mktemp)
-    code=$($CURL -s --max-time 10 \
+    code=$("${CURL[@]}" -s --max-time 10 \
         -u "${SMOKE_ADMIN_USER}:${SMOKE_ADMIN_PASS}" \
         -o "$body_file" \
         -w "%{http_code}" \

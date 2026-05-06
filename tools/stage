@@ -82,7 +82,11 @@ redis_has_acl() {
 # --- subcommands -----------------------------------------------------
 
 cmd_help() {
-    sed -n '2,18p' "$0" | sed 's/^# \?//'
+    # Print the header comment block (every leading-# line after the
+    # shebang, stripped of the `# ` prefix). Self-maintaining — adding
+    # a new subcommand to the header docs above shows up in `help`
+    # automatically, no line-range to update.
+    awk 'NR==1 {next} /^[^#]/ {exit} {sub(/^# ?/, ""); print}' "$0"
 }
 
 cmd_up() {
