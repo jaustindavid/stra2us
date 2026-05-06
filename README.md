@@ -141,6 +141,43 @@ docker compose up -d
 A `tools/stage promote <tag>` wrapper for the prod side is on the
 TODO list.
 
+### The `rescue` user
+
+Stra2Us ships with a `rescue` htpasswd entry provisioned by
+`bootstrap-host.sh` from `backend/admin.htpasswd.default`. The
+default password is **intentionally undocumented** — it's a
+placeholder so a fresh-bootstrap host has *some* working htpasswd
+login while the operator gets oriented, and the soft warning (server
+log) plus UI banner fire until it's overridden.
+
+**Override on every fresh installation.** From the host:
+
+```bash
+cd $PROD_DIR/backend
+python3 create_admin.py rescue '<your-chosen-password>'
+docker compose --env-file ../.env -f ../docker-compose.yaml \
+    -p stra2us-prod restart stra2us-iot
+```
+
+(Same dance in `$STAGING_DIR` for staging, finishing with
+`tools/stage deploy` to rebuild + restart.)
+
+The `rescue` user has implicit wildcard ACL via the `RESCUE_USERS`
+list in `backend/src/api/dependencies.py`, so it works as a true
+break-glass account regardless of Redis state — even on a fresh
+bootstrap before `tools/stage seed-users` has run.
+
+**Footgun worth knowing:** the "is on default" check compares the
+live htpasswd's `rescue` line to `admin.htpasswd.default`
+byte-for-byte. If you ever change rescue's password to something
+else and then deliberately re-set it to the documented default via
+`create_admin.py rescue '<default-pass>'`, a fresh salt is generated
+and the lines diverge — the banner *stays silent* even though the
+password is back to the default plaintext. This is by design: we
+treat "operator ran `create_admin.py`" as "operator made an active
+choice." If you want the warning to fire again, do a literal line
+copy from `admin.htpasswd.default` into `admin.htpasswd` instead.
+
 ### Local development (no docker)
 
 For running tests against a host-side backend (no docker), see

@@ -2,6 +2,48 @@
 
 ## Near-term
 
+- **Bypass Cloudflare cache for `/admin/*` assets.** CF tunnel paths
+  cache static assets at the edge by default. Means every UI deploy
+  (new app.js, styles.css, index.html) shows stale content in the
+  browser until the edge cache expires or is manually purged. Cost
+  ~30 minutes during the v1.5.1 promote chasing "why isn't the
+  banner showing" before realizing the container was serving fresh
+  but CF was returning cached. Set up a CF Cache Rule (or Page Rule)
+  on the `austindavid.com` zone that bypasses cache for
+  `stra2us.austindavid.com/admin/*` (and the staging equivalent).
+  The admin UI is dynamic enough that edge caching offers little
+  value and a lot of confusion.
+
+- **Make seed/bootstrap idempotent: merge htpasswd defaults; skip
+  already-provisioned users.** Two related issues that share a
+  shape:
+  1. **`bootstrap-host.sh`'s `seed_htpasswd`** currently skips
+     entirely if `backend/admin.htpasswd` already exists. On hosts
+     where the file pre-existed (e.g., before `admin.htpasswd.default`
+     was introduced), the rescue user never gets added — operator
+     has to manually `grep '^rescue:' default >> live`. Fix: instead
+     of skip-if-exists, merge per-user. For each user in
+     `admin.htpasswd.default`, append to `admin.htpasswd` if the
+     username isn't already present.
+  2. **`tools/stage seed-users`** always re-prompts for smoke +
+     admin passwords even when those users are already provisioned.
+     Annoying on re-run, forces operator to remember/re-type
+     credentials. Fix: check if the user already exists in htpasswd
+     and `admin_acls:<user>` Redis row; skip silently with "✓
+     already provisioned" line. Add `--force` flag to bypass the
+     checks for fix-corrupt-state cases.
+  Both changes share the "skip if already there + force flag for
+  override" shape. Should land together.
+
+- **Add smoke-test coverage for `/api/admin/security_warnings`.**
+  Currently `tools/smoke_test.sh` doesn't exercise the new
+  security-warnings endpoint. Easy add to the existing activity-log
+  block (which already does Basic auth): an authenticated GET to
+  `/api/admin/security_warnings` should return 200 with a JSON body
+  containing a `warnings` array. Catches future regressions where
+  the endpoint disappears or starts erroring. Lower priority; not
+  blocking.
+
 - **Revisit backup/restore — provide a way to dump an entire app.**
   The existing `/api/admin/keys/backup` only exports client
   credentials (`client:<id>:secret` + `client:<id>:acl`). For the

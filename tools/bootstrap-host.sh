@@ -13,45 +13,17 @@
 #   - Creates PROD_DIR and STAGING_DIR (parent dirs included).
 #   - git clones GIT_REMOTE into each (skips if already a repo).
 #   - Creates the host-side volume directories under each clone.
+#   - Seeds admin.htpasswd from admin.htpasswd.default (merge, not
+#     overwrite — see seed_htpasswd below).
 #   - Prints next-steps guidance for syncing secrets and seeding users.
 
 set -eu
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-CONFIG_FILE="$REPO_ROOT/tools/.deploy-config"
-
-if [[ ! -f "$CONFIG_FILE" ]]; then
-    echo "ERROR: $CONFIG_FILE not found." >&2
-    echo "Copy tools/.deploy-config.example to tools/.deploy-config and fill in values." >&2
-    exit 1
-fi
-
-# shellcheck disable=SC1090
-source "$CONFIG_FILE"
-
-# Required vars
-for v in PROD_DIR STAGING_DIR GIT_REMOTE; do
-    if [[ -z "${!v:-}" ]]; then
-        echo "ERROR: $v is empty in $CONFIG_FILE" >&2
-        exit 1
-    fi
-done
-
-echo
-echo "About to bootstrap stra2us deploy directories:"
-echo
-echo "  Prod clone:    $PROD_DIR"
-echo "  Staging clone: $STAGING_DIR"
-echo "  Git remote:    $GIT_REMOTE"
-echo
-read -rp "Looks right? [y/N] " confirm
-case "$confirm" in
-    y|Y) ;;
-    *) echo "aborted"; exit 1 ;;
-esac
-
-# --- helpers ---------------------------------------------------------
+# --- function definitions ---------------------------------------------
+# Defined unconditionally so tests/tools can source this file and
+# exercise these functions in isolation. The "do the bootstrap" body
+# at the bottom of the file is gated on "invoked as a script" so
+# sourcing is safe.
 
 clone_or_skip() {
     local target="$1"
@@ -75,43 +47,108 @@ ensure_dir() {
     fi
 }
 
-# --- run -------------------------------------------------------------
-
-clone_or_skip "$PROD_DIR"
-clone_or_skip "$STAGING_DIR"
-
-# Volume dirs on the host. These get bind-mounted into containers per
-# the compose files. Created here so first `docker compose up` doesn't
-# accidentally create them as root-owned by docker daemon.
-ensure_dir "$PROD_DIR/firmware"
-ensure_dir "$PROD_DIR/redis_data"
-ensure_dir "$STAGING_DIR/firmware_staging"
-ensure_dir "$STAGING_DIR/redis_data_staging"
-
-# Bootstrap admin.htpasswd from admin.htpasswd.default if not already
-# present. Idempotent — won't overwrite an existing htpasswd. The
-# default file ships a `rescue` user with a known starter password
-# (documented in README); operator MUST change it before exposing
-# the device hostname.
+# Seed `backend/admin.htpasswd` from `backend/admin.htpasswd.default`.
+# MERGE behavior, not overwrite:
+#   - If default file is absent: nothing to do.
+#   - If live file is absent: copy default in full.
+#   - If live file exists: for each line in default, append to live
+#     ONLY if that username is not already in live. Existing entries
+#     are never overwritten — operator's password is sacred.
+#
+# Idempotent: running multiple times never duplicates a user, never
+# clobbers an operator-set password.
 seed_htpasswd() {
     local target="$1"
     local default_file="$target/backend/admin.htpasswd.default"
     local live_file="$target/backend/admin.htpasswd"
-    if [[ -f "$live_file" ]]; then
-        echo "→ $live_file already exists, skipping default seed"
-        return
-    fi
+
     if [[ ! -f "$default_file" ]]; then
         echo "→ $default_file not found — skipping (manually create htpasswd later)"
         return
     fi
-    echo "→ seeding $live_file from admin.htpasswd.default"
-    cp "$default_file" "$live_file"
-}
-seed_htpasswd "$PROD_DIR"
-seed_htpasswd "$STAGING_DIR"
 
-cat <<EOF
+    if [[ ! -f "$live_file" ]]; then
+        echo "→ $live_file not present, seeding from admin.htpasswd.default"
+        cp "$default_file" "$live_file"
+        return
+    fi
+
+    # Merge — append-if-missing per username.
+    local added=0 skipped=0 line username
+    while IFS= read -r line; do
+        # Skip blank lines and operator-added comments. The htpasswd
+        # parser (admin_auth.py) ignores anything that doesn't have a
+        # `:`, so being permissive here matches that behavior.
+        [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+        username="${line%%:*}"
+        if grep -q "^${username}:" "$live_file" 2>/dev/null; then
+            skipped=$((skipped + 1))
+        else
+            printf '%s\n' "$line" >> "$live_file"
+            added=$((added + 1))
+            echo "  → added '$username' from default"
+        fi
+    done < "$default_file"
+
+    if (( added == 0 )); then
+        echo "→ $live_file: all default users already present (skipped $skipped)"
+    else
+        echo "→ $live_file: added $added user(s), skipped $skipped already-present"
+    fi
+}
+
+# --- main bootstrap (only when invoked as a script, not sourced) ------
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+    CONFIG_FILE="$REPO_ROOT/tools/.deploy-config"
+
+    if [[ ! -f "$CONFIG_FILE" ]]; then
+        echo "ERROR: $CONFIG_FILE not found." >&2
+        echo "Copy tools/.deploy-config.example to tools/.deploy-config and fill in values." >&2
+        exit 1
+    fi
+
+    # shellcheck disable=SC1090
+    source "$CONFIG_FILE"
+
+    # Required vars
+    for v in PROD_DIR STAGING_DIR GIT_REMOTE; do
+        if [[ -z "${!v:-}" ]]; then
+            echo "ERROR: $v is empty in $CONFIG_FILE" >&2
+            exit 1
+        fi
+    done
+
+    echo
+    echo "About to bootstrap stra2us deploy directories:"
+    echo
+    echo "  Prod clone:    $PROD_DIR"
+    echo "  Staging clone: $STAGING_DIR"
+    echo "  Git remote:    $GIT_REMOTE"
+    echo
+    read -rp "Looks right? [y/N] " confirm
+    case "$confirm" in
+        y|Y) ;;
+        *) echo "aborted"; exit 1 ;;
+    esac
+
+    clone_or_skip "$PROD_DIR"
+    clone_or_skip "$STAGING_DIR"
+
+    # Volume dirs on the host. These get bind-mounted into containers per
+    # the compose files. Created here so first `docker compose up` doesn't
+    # accidentally create them as root-owned by docker daemon.
+    ensure_dir "$PROD_DIR/firmware"
+    ensure_dir "$PROD_DIR/redis_data"
+    ensure_dir "$STAGING_DIR/firmware_staging"
+    ensure_dir "$STAGING_DIR/redis_data_staging"
+
+    seed_htpasswd "$PROD_DIR"
+    seed_htpasswd "$STAGING_DIR"
+
+    cat <<EOF
 
 ✓ Bootstrap complete.
 
@@ -147,3 +184,4 @@ Next steps:
      tools/stage smoke
 
 EOF
+fi
