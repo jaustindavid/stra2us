@@ -196,8 +196,15 @@ cmd_deploy() {
     cmd_wait_tunnel || return 1
 
     echo
-    echo "Deploy complete. Verify with smoke (from a LAN dev box, not this host):"
-    echo "    tools/stage smoke    # see TODO — host-side smoke is currently broken"
+    echo "==================================================================="
+    echo "Deploy complete."
+    echo "  ref:       $(git rev-parse --abbrev-ref HEAD) @ $(git rev-parse --short HEAD)"
+    echo "  containers up: $(dcs ps --services 2>/dev/null | tr '\n' ' ')"
+    echo "==================================================================="
+    echo
+    read -rp "Press <Enter> to run a live smoke test (Ctrl-C to skip)... " _
+    echo
+    cmd_smoke
 }
 
 cmd_promote() {
@@ -275,18 +282,31 @@ cmd_promote() {
         echo "         Check: docker compose -p stra2us-prod logs cloudflared"
     fi
 
+    local prod_services
+    prod_services=$(docker compose -p stra2us-prod ps --services 2>/dev/null | tr '\n' ' ')
     echo
-    echo "✓ Prod promoted to $tag."
+    echo "==================================================================="
+    echo "Prod promoted to $tag."
+    echo "  prod dir:      $PROD_DIR"
+    echo "  deploy branch: $(git -C "$PROD_DIR" rev-parse --abbrev-ref HEAD) @ $(git -C "$PROD_DIR" rev-parse --short HEAD)"
+    echo "  containers up: $prod_services"
+    echo "==================================================================="
     echo
-    echo "Verify (from a LAN dev box, not this host):"
-    echo "    ( set -a && source .env && tools/smoke_test.sh )"
-    echo "Then UI eyeball: https://stra2us.austindavid.com/admin/"
+    read -rp "Press <Enter> to run a live smoke test against prod (Ctrl-C to skip)... " _
     echo
-    echo "Rollback (if needed): docker tag stra2us-stra2us-iot:pre-${tag} \\"
-    echo "                          stra2us-stra2us-iot:latest"
-    echo "                      docker compose -p stra2us-prod up -d"
-    echo "                      (only works if you tagged the previous"
-    echo "                      image before this promote)"
+    # Run smoke against prod hostnames (smoke_test.sh defaults match
+    # prod). Sources $PROD_DIR/.env so SMOKE_ADMIN_USER/PASS — if
+    # present — get picked up and the activity-log + security_warnings
+    # checks run.
+    ( set -a && source "$PROD_DIR/.env" && "$REPO_ROOT/tools/smoke_test.sh" )
+    echo
+    echo "After smoke, eyeball: https://stra2us.austindavid.com/admin/"
+    echo
+    echo "Rollback (if needed):"
+    echo "    docker tag stra2us-stra2us-iot:pre-${tag} \\"
+    echo "        stra2us-stra2us-iot:latest"
+    echo "    docker compose -p stra2us-prod up -d"
+    echo "    (only works if you tagged the previous image before promote)"
 }
 
 cmd_seed_users() {
