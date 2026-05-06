@@ -21,6 +21,7 @@
 #   tools/sync-secrets.sh             # sync both files
 #   tools/sync-secrets.sh --dry-run   # show what would happen, no copy
 
+set -x
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -74,10 +75,13 @@ push_one() {
     if (( DRY_RUN )); then
         return
     fi
-    # rsync over SSH (not scp): more forgiving with absolute paths
-    # on Synology, idempotent (only transfers if the file changed),
-    # preserves mtime via -t. BatchMode=yes fails fast on prompts.
-    rsync -t -e "ssh -p $PORT -o BatchMode=yes" "$src" "$target"
+    # scp over ssh. We tried rsync; on Synology, rsync auth fails
+    # while scp succeeds — Synology's sshd allows the scp/sftp
+    # subsystem for users that don't have a full interactive-shell
+    # privilege, and rsync requires the latter. -p preserves mtime
+    # so re-runs only push when local file changes (cheap dedup);
+    # BatchMode=yes fails fast on auth prompts.
+    scp -p -o BatchMode=yes -P "$PORT" "$src" "$target"
 }
 
 # Verify SSH connectivity before trying to push anything. Catches

@@ -14,8 +14,8 @@ DEPLOY_PORT=16622
 # prod, one for staging. Pick a volume with growth room: redis_data
 # accumulates the activity-log stream (currently capped at MAXLEN
 # 150000), firmware/ holds OTA binaries.
-PROD_DIR=/volume1/stra2us/stra2us-prod
-STAGING_DIR=/volume1/stra2us/stra2us-staging
+PROD_DIR=stra2us/stra2us-prod
+STAGING_DIR=stra2us/stra2us-staging
 
 # --- Git remote -------------------------------------------------------
 # The remote the host will clone from. Same URL you use on dev.
