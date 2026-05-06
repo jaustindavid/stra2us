@@ -16,6 +16,8 @@
 #   status               Show staging container states
 #   wait-tunnel          Poll cloudflared logs until 4 connections register
 #   smoke                Run smoke test against staging hostnames
+#   smoke-prod           Run smoke test against prod hostnames
+#                        (sources $PROD_DIR/.env from .deploy-config)
 #   seed-users [--force] Provision the smoke + admin + OAuth seed users
 #                        Idempotent: skips users already in htpasswd + Redis.
 #                        --force re-provisions regardless of existing state.
@@ -175,6 +177,29 @@ cmd_smoke() {
     )
 }
 
+cmd_smoke_prod() {
+    # Source the deploy config to find $PROD_DIR. Same file used by
+    # bootstrap-host.sh, sync-secrets.sh, and cmd_promote.
+    local config_file="$REPO_ROOT/tools/.deploy-config"
+    [[ -f "$config_file" ]] || die "$config_file missing — populate from tools/.deploy-config.example"
+    # shellcheck disable=SC1090
+    source "$config_file"
+    [[ -n "${PROD_DIR:-}" ]] || die "PROD_DIR not set in $config_file"
+    [[ -f "$PROD_DIR/.env" ]] || die "$PROD_DIR/.env missing — run tools/sync-secrets.sh first"
+
+    echo "→ running smoke test against prod hostnames"
+    # smoke_test.sh defaults match prod (BROWSER_HOST=stra2us.austindavid.com,
+    # DEVICE_HOST=iot.stra2us.austindavid.com, port 8153) — no hostname
+    # overrides needed; we only need the prod env so SMOKE_ADMIN_USER/PASS
+    # (if present) get picked up for the activity-log + security_warnings
+    # checks. Forwards extra args to smoke_test.sh (e.g. --skip-device).
+    (
+        set -a
+        source "$PROD_DIR/.env"
+        "$REPO_ROOT/tools/smoke_test.sh" "$@"
+    )
+}
+
 cmd_deploy() {
     require_env_file
     local ref="${1:-}"
@@ -294,11 +319,7 @@ cmd_promote() {
     echo
     read -rp "Press <Enter> to run a live smoke test against prod (Ctrl-C to skip)... " _
     echo
-    # Run smoke against prod hostnames (smoke_test.sh defaults match
-    # prod). Sources $PROD_DIR/.env so SMOKE_ADMIN_USER/PASS — if
-    # present — get picked up and the activity-log + security_warnings
-    # checks run.
-    ( set -a && source "$PROD_DIR/.env" && "$REPO_ROOT/tools/smoke_test.sh" )
+    cmd_smoke_prod
     echo
     echo "After smoke, eyeball: https://stra2us.austindavid.com/admin/"
     echo
@@ -383,6 +404,7 @@ case "$1" in
     status)        shift; cmd_status "$@" ;;
     wait-tunnel)   shift; cmd_wait_tunnel "$@" ;;
     smoke)         shift; cmd_smoke "$@" ;;
+    smoke-prod)    shift; cmd_smoke_prod "$@" ;;
     seed-users)    shift; cmd_seed_users "$@" ;;
     deploy)        shift; cmd_deploy "$@" ;;
     promote)       shift; cmd_promote "$@" ;;
