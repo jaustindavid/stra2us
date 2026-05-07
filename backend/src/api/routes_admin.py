@@ -710,7 +710,9 @@ async def delete_queue(topic: str, _: dict = Depends(require_admin_queue("write"
 def _log_resource_from_action(action: str) -> Optional[str]:
     """Parse 'METHOD /q/<topic>' or 'METHOD /kv/<key>' into an ACL
     check target like 'q/<topic>' or 'kv/<key>'. Returns None for
-    actions that aren't ACL-scoped (e.g. /firmware/)."""
+    actions that aren't ACL-scoped — including any historical
+    `/firmware/` entries that might still be in the activity log
+    stream from before the route was removed."""
     try:
         _, path = action.split(" ", 1)
     except ValueError:

@@ -77,8 +77,7 @@ stra2us.austindavid.com ─── CNAME ──► CF tunnel (CF edge IPs)
 - **Single backend** serves both. The backend doesn't care which path
   a request arrived via — same routes, same handlers. The middleware
   just gates `/admin/`, `/api/admin/`, `/app/`, `/oauth/` (browser
-  paths); `/q/`, `/kv/`, `/firmware/` (device paths) pass through
-  untouched.
+  paths); `/q/`, `/kv/` (device paths) pass through untouched.
 
 The key property: a network failure on the lower half (CF outage, DNS
 issue, OAuth misconfig) cannot break the upper half. They share only
@@ -101,7 +100,7 @@ browser path.**
 | 4.6 | Prod cutover with data migration | **Done** (2026-05-06) |
 | 5 | Provisioning UI for granting access | TBD (requires staging) |
 | 6 | Migrate operator off htpasswd; narrow to RESCUE_USERS | **Done** (2026-05-06) |
-| 7 | Optional cleanup of legacy browser access | TBD |
+| 7 | Optional cleanup of legacy browser access | **Decided: Option A** (keep htpasswd rescue path); brute-force lockout follow-up in [`fr_basic_auth_lockout.md`](fr_basic_auth_lockout.md) |
 
 Build hygiene partially applied: `requirements.txt` is now pinned to
 specific versions. The `requirements.lock.txt` workflow described
@@ -403,24 +402,52 @@ smoke:<salted-hash>      # smoke-test heartbeat check
 
 Devices remain on HTTP/8153 with HMAC signing. They never see this.
 
-## Phase 7 — Optional cleanup of the device-hostname admin path
+## Phase 7 — Decision: keep htpasswd rescue path (Option A)
 
-Two viable options; the operator should pick before this phase
-starts. (Both are deferrable indefinitely; today's setup is fine.)
+**Decided 2026-05-06: Option A.** The rescue path stays as-is —
+`http://iot.stra2us.austindavid.com:8153/admin/` reachable with
+htpasswd narrowed to `RESCUE_USERS` (`rescue` only) plus the
+`smoke` user for testing. Rationale:
 
-**Option A — keep `iot.stra2us.austindavid.com:8153/admin/` reachable
-with htpasswd narrowed to RESCUE_USERS.** Pro: simple rescue, the
-exact path that saved the v1.5 recovery. Con: admin UI is publicly
-reachable on HTTP/8153, protected only by basic auth.
+- The rescue path is simple, well-tested, and is the literal
+  mechanism that saved the v1.5 cutover (squid interception of
+  outbound HTTP on the host) and the docker-compose-corruption
+  recovery later the same day. Removing it would have prevented
+  both rescues.
+- The remaining attack surface (online brute force of Basic Auth
+  on port 8153) is bounded by:
+  - A strong, randomly-generated rescue password (operator policy).
+  - Rotation after every rescue use (since the password rides the
+    wire unencrypted during use).
+  - The brute-force lockout described in
+    [`fr_basic_auth_lockout.md`](fr_basic_auth_lockout.md) — adds
+    sliding-window failure detection, per-(IP, username) lockout,
+    and an `auth_log` Redis stream for operator visibility.
+- Option B (remove `/admin/` from the device hostname) was
+  considered and rejected: the marginal security benefit
+  (zero-internet-exposed admin) doesn't justify making rescue
+  harder during the moments it matters most.
 
-**Option B — remove admin from the device hostname entirely.** The
-device hostname serves only `/q/`, `/kv/`, `/firmware/`; everything
-else returns 404 or 410. Rescue becomes "SSH to host, port-forward
-or `docker exec` into the container". Pro: zero internet-exposed
-admin. Con: rescue requires shell access (which is already needed
-for any serious recovery, so the additional cost is small).
+Considered-and-rejected alternatives:
 
-Devices still untouched in either option.
+- **Option B (remove device-hostname admin entirely).** Documented
+  above; deferrable indefinitely, but operator's instinct
+  ("strong password + lockout is enough; keep the rescue path
+  intact") prevailed.
+- **Move `/admin/` off port 8153 to a different port** — same
+  exposure, more configuration, devices unaffected. No improvement.
+- **Firewall port 8153 to LAN-only at the router** — operationally
+  separate from this phase; can be done independently. Not pursued
+  here because port 8153 is the production device-traffic port and
+  needs to stay open to the public internet.
+
+**Follow-up work** captured in
+[`fr_basic_auth_lockout.md`](fr_basic_auth_lockout.md): brute-force
+detection, lockout, and logging on the rescue path. Not blocking;
+the strong-password mitigation is sufficient on its own as long as
+the operator follows the rotation policy.
+
+Devices still untouched, before and after this decision.
 
 ## Build hygiene (still applies going forward)
 

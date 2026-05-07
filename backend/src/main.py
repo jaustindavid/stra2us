@@ -138,16 +138,9 @@ async def activity_log_middleware(request: Request, call_next):
         raise e
     finally:
         path = request.url.path
-        # Log device data APIs and firmware downloads
-        if path.startswith("/q/") or path.startswith("/kv/") or path.startswith("/firmware/"):
-            if path.startswith("/firmware/"):
-                client_id = request.client.host if request.client else "unknown"
-                log_status = (
-                    "Hit (200)"          if status == 200 else
-                    "Not Modified (304)" if status == 304 else
-                    f"Miss ({status})"
-                )
-            elif (
+        # Log device data APIs (queues + KV).
+        if path.startswith("/q/") or path.startswith("/kv/"):
+            if (
                 request.method == "GET"
                 and path.startswith("/kv/")
                 and 200 <= status < 300
@@ -196,7 +189,6 @@ async def perf_log_middleware(request: Request, call_next):
     path = request.url.path
     skip = (
         path.startswith("/admin/")
-        or path.startswith("/firmware/")
         or path == "/api/admin/perf_log"
         or path in ("/", "/health")
     )
@@ -333,12 +325,9 @@ app.include_router(app_router, tags=["app"])
 # auth path.
 app.include_router(oauth_router, tags=["oauth"])
 
-# Mount Firmware OTA directory. Default /firmware matches the Docker
-# volume mount in docker-compose.yml; override with STRA2US_FIRMWARE_DIR
-# for bare local dev or non-container deployments.
-FIRMWARE_DIR = os.environ.get("STRA2US_FIRMWARE_DIR", "/firmware")
-os.makedirs(FIRMWARE_DIR, exist_ok=True)
-app.mount("/firmware", StaticFiles(directory=FIRMWARE_DIR), name="firmware")
+# Note: the legacy `/firmware/` static-file route was removed in
+# 2026-05-06; firmware is now stored as KV blobs and fetched via
+# the regular `/kv/` device path. See git log for the removal commit.
 
 # Soft warning at startup if the rescue user is still on the
 # bootstrap-default password. Loud version (admin-UI banner) lives

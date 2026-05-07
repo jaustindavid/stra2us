@@ -18,13 +18,11 @@ clarity since "staging" now refers to the docker stack.
 ## Bring up the backend
 
 The `start.sh` and `supervisord.conf` paths assume the docker layout
-(`/firmware`, `/app`). For a host-side run, override the firmware dir
-and set `PYTHONPATH` directly:
+(`/app`). For a host-side run, just point `PYTHONPATH` at `src/`:
 
 ```bash
 cd backend
-mkdir -p /tmp/stra2us_firmware
-PYTHONPATH=src STRA2US_FIRMWARE_DIR=/tmp/stra2us_firmware \
+PYTHONPATH=src \
   ./venv/bin/uvicorn src.main:app --host 127.0.0.1 --port 8153 \
   > /tmp/stra2us_uvicorn.log 2>&1 &
 echo $! > /tmp/stra2us_uvicorn.pid

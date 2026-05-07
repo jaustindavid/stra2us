@@ -29,9 +29,8 @@ services:
       # on 8153.
       - "8253:8153"
     volumes:
-      # Staging-only firmware + Redis state. Separate dirs from prod
-      # ensure prod data is never touched by staging deploys.
-      - ./firmware_staging:/firmware
+      # Staging-only Redis state. Separate dir from prod's so prod data
+      # is never touched by staging deploys.
       - ./redis_data_staging:/data
       # Note: NO ./backend:/app mount. Image is the source of truth on
       # staging; rebuilding the image is the deploy step. Different

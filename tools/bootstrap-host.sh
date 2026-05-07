@@ -142,9 +142,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     # Volume dirs on the host. These get bind-mounted into containers per
     # the compose files. Created here so first `docker compose up` doesn't
     # accidentally create them as root-owned by docker daemon.
-    ensure_dir "$PROD_DIR/firmware"
     ensure_dir "$PROD_DIR/redis_data"
-    ensure_dir "$STAGING_DIR/firmware_staging"
     ensure_dir "$STAGING_DIR/redis_data_staging"
 
     seed_htpasswd "$PROD_DIR"

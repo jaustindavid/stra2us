@@ -9,9 +9,6 @@ services:
     ports:
       - "8153:8153"
     volumes:
-      # Map host firmware folder for OTA binaries
-      - ./firmware:/firmware
-
       # Map host data folder for Redis persistence
       - ./redis_data:/data
 

@@ -64,8 +64,8 @@ edits, topology changes, recovery work.
 
 5. **Devices are sacred.** The IoT path
    (`iot.stra2us.austindavid.com:8153`, HTTP, HMAC-signed) must keep
-   working through every change. Anything touching `/q/`, `/kv/`, or
-   `/firmware/` request handling gets explicit smoke-test coverage.
+   working through every change. Anything touching `/q/` or `/kv/`
+   request handling gets explicit smoke-test coverage.
 
 6. **One variable per phase.** Code, dependencies, and network
    topology change in separate steps. If a change wants all three,

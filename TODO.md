@@ -113,6 +113,16 @@
   work" on a fresh host) but applies to any prod-on-a-new-machine
   recovery scenario.
 
+- **Implement Basic Auth brute-force detection & lockout.** FR is
+  in [`docs/fr_basic_auth_lockout.md`](docs/fr_basic_auth_lockout.md).
+  Sliding-window failure counter keyed by `(source_ip, username)`,
+  per-(IP, username) lockout with `Retry-After`, Redis-backed state,
+  failed-attempts logged to a new `auth_log` stream. Not blocking
+  (strong rescue password is the load-bearing mitigation today),
+  but adds defense-in-depth + operator visibility. ~half-day of
+  focused work plus tests; no UI changes required initially. Open
+  questions captured in the FR.
+
 - **First-class "global admin" recognition + UI affordances.** A
   user with `*:rw` is the de-facto superuser; the UI doesn't say
   that explicitly today, and several flows are awkward as a result.

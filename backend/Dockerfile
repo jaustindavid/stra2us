@@ -37,7 +37,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Create necessary directories for volumes and logs
-RUN mkdir -p /firmware /data /var/log/supervisor /var/run/
+RUN mkdir -p /data /var/log/supervisor /var/run/
 
 # Copy the rest of the application
 # (Overridden at runtime when the user mounts ./backend:/app)

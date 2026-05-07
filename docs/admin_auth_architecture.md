@@ -174,8 +174,8 @@ Returns False (public) for:
 - `/app/_static/*` (public assets — `_`-prefixed reserved-namespace
   convention)
 - `/api/app/*` (public lookup endpoints)
-- Device routes: `/q/`, `/kv/`, `/firmware/` — gated by HMAC
-  signature, not session auth (see `acl_model.md`)
+- Device routes: `/q/`, `/kv/` — gated by HMAC signature, not
+  session auth (see `acl_model.md`)
 - `/health`, `/`
 
 ## See also
