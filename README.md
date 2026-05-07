@@ -177,6 +177,25 @@ list in `backend/src/api/dependencies.py`, so it works as a true
 break-glass account regardless of Redis state — even on a fresh
 bootstrap before `tools/stage seed-users` has run.
 
+### Operator sign-in: OAuth, not htpasswd
+
+Post-v1.5, the operator's primary admin path is **OAuth (Google) on
+the browser hostname** (`stra2us.austindavid.com`). Their identity
+lives as `admin_acls:<google-email>` in Redis, edited via the Admin
+Users page. They do **not** have an htpasswd entry.
+
+`backend/admin.htpasswd` is expected to contain only:
+- `rescue` — break-glass via the device hostname's Basic Auth path
+  (RESCUE_USERS-covered, always wildcard).
+- `smoke` — used by `tools/smoke_test.sh` for the activity-log
+  heartbeat check; provisioned via `tools/stage seed-users`.
+
+If you find operator-named entries (e.g. an old username you used to
+type into the Basic Auth dialog), they're an artifact of pre-v1.5
+setup and can be removed: delete the htpasswd line, then delete the
+corresponding `admin_acls:<name>` Redis row (visible in the Admin
+Users page as `acl-only` source post-Phase-5; click Delete).
+
 **Footgun worth knowing:** the "is on default" check compares the
 live htpasswd's `rescue` line to `admin.htpasswd.default`
 byte-for-byte. If you ever change rescue's password to something

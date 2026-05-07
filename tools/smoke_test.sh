@@ -44,12 +44,14 @@
 #    The file (`backend/admin.htpasswd`) is bind-mounted into the
 #    container, so the edit takes effect immediately — no rebuild.
 #
-# 2) Provision the ACL row. Wildcard prefix so the smoke user sees
-#    every activity-log entry; without this, the log filter silently
+# 2) Provision the ACL row. Read-only wildcard so the smoke user
+#    sees every activity-log entry without granting write access
+#    (smoke never mutates state — tighter ACL limits blast radius if
+#    SMOKE_ADMIN_PASS leaks). Without this, the log filter silently
 #    drops everything and the freshness check reports a false miss.
 #
 #       docker compose exec stra2us-iot redis-cli SET \
-#         'admin_acls:smoke' '{"permissions":[{"prefix":"*","access":"rw"}]}'
+#         'admin_acls:smoke' '{"permissions":[{"prefix":"*","access":"r"}]}'
 #
 # 3) Run with creds:
 #

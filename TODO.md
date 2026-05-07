@@ -113,6 +113,48 @@
   work" on a fresh host) but applies to any prod-on-a-new-machine
   recovery scenario.
 
+- **First-class "global admin" recognition + UI affordances.** A
+  user with `*:rw` is the de-facto superuser; the UI doesn't say
+  that explicitly today, and several flows are awkward as a result.
+  Three related improvements that should land together:
+  1. **Tag a user as a global admin** — single button in the Admin
+     Users row (or in the Edit ACL modal) that's sugar for "set
+     permissions to `[{prefix:'*', access:'rw'}]`." Removes the
+     "type the right shape into the manual rule field" step.
+  2. **Recognize `*:rw` as a label**, not just data — render a
+     `global admin` badge (or similar) on rows whose ACL has any
+     `*:rw` permission. Distinguishes them visually from scoped
+     admins. Powers other UI gating downstream.
+  3. **Disable the device picker for global admins** — opening
+     "+ Select Devices" for a user with `*:rw` is meaningless
+     (they already cover everything). Hide the button (or replace
+     with a "covers everything (wildcard)" hint), avoiding the
+     confusion that surfaced the wildcard-dedupe TODO.
+  Bundles cleanly: a single `is_global_admin(acl)` helper covers
+  all three checks. About a half-day of work end-to-end.
+
+- **Device picker dedupe doesn't recognize wildcard coverage.** A
+  user with `*:rw` (or `<app>:rw` covering a whole app) opens the
+  device picker and sees every device as un-granted, even though the
+  wildcard logically covers all of them. Should treat `*` and
+  parent-prefix matches as "already granted" in the picker's
+  disabled-checkbox logic. Implementation: replace the exact-string
+  dedupe in `confirmDevicePicker` / the rendering predicate
+  (`aclCurrentPermissions.some(p => p.prefix === token)`) with a
+  coverage check that mirrors the backend's `_prefix_matches`
+  semantics (`*`, exact, or parent-prefix). Same predicate also
+  improves the "(already granted)" labeling in the picker.
+
+- **Device picker modal overflows the viewport with many devices.**
+  In Admin Users → Edit ACL → "+ Select Devices", a long device list
+  pushes the modal beyond the bottom of the screen — the picker list
+  has `max-height: 50vh` but the surrounding modal-content has no
+  height constraint, so headers + hints + the 50vh list + actions
+  can total >100vh. Fix: cap `.modal-content` (or just `.acl-modal-content`)
+  at something like 90vh, make it `display: flex; flex-direction: column`,
+  let the list section grow with `flex: 1 1 auto` so it shrinks to
+  fit available space. ~5 lines of CSS.
+
 - **"Last seen just now ago" on single-device screen.** Time-format
   bug: the relative-time formatter is concatenating "just now" with
   "ago" when the duration is sub-threshold. Should be "just now"

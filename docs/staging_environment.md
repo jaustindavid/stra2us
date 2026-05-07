@@ -311,7 +311,7 @@ At minimum, three seeded identities:
 
 | User | Auth | Role | Why seeded |
 |---|---|---|---|
-| `smoke` | htpasswd + `admin_acls:smoke` with `*:rw` | smoke-test client | The smoke test's activity-log heartbeat check needs an account that can read the full log. Wildcard ACL. |
+| `smoke` | htpasswd + `admin_acls:smoke` with `*:r` | smoke-test client | The smoke test's activity-log heartbeat check needs an account that can read the full log. Read-only wildcard — smoke never mutates state, so a leak of `SMOKE_ADMIN_PASS` (which lives in several `.env*` files) limits blast radius to read-only. |
 | `admin` | htpasswd + `admin_acls:admin` with `*:rw` | manual rescue / superuser | The htpasswd rescue path on `iot-staging...:8253/admin/` needs a working superuser. Wildcard ACL. |
 | One Google email | OAuth + `admin_acls:<email>` with `*:rw` | end-to-end OAuth testing | Lets the operator sign in via the OAuth flow on `stra2us-staging.austindavid.com` and exercise the full authenticated UI. |
 

@@ -342,9 +342,15 @@ cmd_seed_users() {
         echo "   pass --force to re-provision and overwrite)"
     fi
 
-    local _wildcard='{"permissions":[{"prefix":"*","access":"rw"}]}'
+    # smoke user is read-only (the smoke test never mutates state).
+    # admin (rescue) + OAuth operator are read-write (full operator
+    # capabilities). Tighter smoke ACL limits blast radius if
+    # SMOKE_ADMIN_PASS ever leaks (it lives in .env files on dev,
+    # host, and possibly CI — leak surface is broader than rw users).
+    local _wildcard_r='{"permissions":[{"prefix":"*","access":"r"}]}'
+    local _wildcard_rw='{"permissions":[{"prefix":"*","access":"rw"}]}'
 
-    # SMOKE user — htpasswd + wildcard ACL.
+    # SMOKE user — htpasswd + read-only wildcard ACL.
     if (( !force )) && htpasswd_has_user smoke && redis_has_acl smoke; then
         echo "  ✓ smoke already provisioned (htpasswd + ACL); skipping"
     else
@@ -356,11 +362,11 @@ cmd_seed_users() {
         fi
         (cd "$REPO_ROOT/backend" && python3 create_admin.py smoke "$smoke_pass")
         dcs exec -T "$STAGING_BACKEND_SERVICE" redis-cli SET \
-            'admin_acls:smoke' "$_wildcard"
-        echo "  ✓ smoke provisioned"
+            'admin_acls:smoke' "$_wildcard_r"
+        echo "  ✓ smoke provisioned (read-only)"
     fi
 
-    # ADMIN user — htpasswd + wildcard ACL. Rescue-style operator path
+    # ADMIN user — htpasswd + wildcard rw. Rescue-style operator path
     # on iot-staging (htpasswd is reachable on the device hostname even
     # when OAuth is the primary path on the browser hostname).
     if (( !force )) && htpasswd_has_user admin && redis_has_acl admin; then
@@ -370,11 +376,11 @@ cmd_seed_users() {
         read -rsp "Password for staging 'admin' user (rescue path): " admin_pass; echo
         (cd "$REPO_ROOT/backend" && python3 create_admin.py admin "$admin_pass")
         dcs exec -T "$STAGING_BACKEND_SERVICE" redis-cli SET \
-            'admin_acls:admin' "$_wildcard"
+            'admin_acls:admin' "$_wildcard_rw"
         echo "  ✓ admin provisioned"
     fi
 
-    # OAUTH user — wildcard ACL only (auth comes from Google). We have
+    # OAUTH user — wildcard rw (auth comes from Google). We have
     # to ask for the email before we can check; blank input skips.
     local oauth_email
     read -rp "Google email for staging OAuth user (blank to skip): " oauth_email
@@ -384,7 +390,7 @@ cmd_seed_users() {
         echo "  ✓ $oauth_email already provisioned (ACL); skipping"
     else
         dcs exec -T "$STAGING_BACKEND_SERVICE" redis-cli SET \
-            "admin_acls:$oauth_email" "$_wildcard"
+            "admin_acls:$oauth_email" "$_wildcard_rw"
         echo "  ✓ $oauth_email provisioned"
     fi
 

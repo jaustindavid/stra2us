@@ -100,7 +100,7 @@ browser path.**
 | 4.5 | Build staging environment | **Done** (gates Phase 5+) |
 | 4.6 | Prod cutover with data migration | **Done** (2026-05-06) |
 | 5 | Provisioning UI for granting access | TBD (requires staging) |
-| 6 | Migrate operator off htpasswd; narrow to RESCUE_USERS | TBD |
+| 6 | Migrate operator off htpasswd; narrow to RESCUE_USERS | **Done** (2026-05-06) |
 | 7 | Optional cleanup of legacy browser access | TBD |
 
 Build hygiene partially applied: `requirements.txt` is now pinned to
@@ -370,11 +370,36 @@ ACL-shape footgun.
 Scoped to the browser hostname. Device hostname unchanged. Details
 TBD when we get here.
 
-## Phase 6 — Migrate operator off htpasswd (TBD)
+## Phase 6 — Migrate operator off htpasswd (DONE — 2026-05-06)
 
-Goal: operator now signs in via Google by default. Htpasswd narrows
-to a hardcoded `RESCUE_USERS` list (e.g. just `rescue`) used only on
-the device hostname's `/admin/`, only when Google is unreachable.
+Goal achieved: operator's primary admin path is OAuth on the
+browser hostname; htpasswd narrows to a `RESCUE_USERS` list
+(default `{"rescue"}`) plus the smoke-test user, used only on the
+device hostname for break-glass and integration testing.
+
+What landed:
+- `RESCUE_USERS` set in `backend/src/api/dependencies.py` —
+  hardcoded wildcard ACL for usernames in this list when no
+  Redis row exists. Env-overridable via
+  `STRA2US_RESCUE_USERS=name1,name2`.
+- Bootstrap-default `rescue` htpasswd entry shipped as
+  `backend/admin.htpasswd.default`; merged into the live file by
+  `tools/bootstrap-host.sh::seed_htpasswd`.
+- Soft warning at server startup + UI banner via
+  `/api/admin/security_warnings` when `rescue` is on the
+  bootstrap-default password.
+- Hostname-aware logout (`/admin/logout`) flushes Chrome's Basic
+  Auth cache for the device-hostname path so testing the rescue
+  flow doesn't require quitting the browser.
+- Operator-named htpasswd entries removed (e.g. `austin`).
+  Operator's permissions live as `admin_acls:<google-email>` and
+  are managed via the Admin Users UI (Phase 5).
+
+Final state of `backend/admin.htpasswd` on prod and staging:
+```
+rescue:<salted-hash>     # break-glass, RESCUE_USERS-covered
+smoke:<salted-hash>      # smoke-test heartbeat check
+```
 
 Devices remain on HTTP/8153 with HMAC signing. They never see this.
 
