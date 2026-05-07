@@ -181,14 +181,49 @@
                         <input type="text" id="aclNewPrefix" placeholder="Prefix (e.g. coaticlock)" style="flex:1;">
                         <button class="acl-access-toggle access-rw" id="aclNewAccessToggle" onclick="toggleNewAccess()">rw</button>
                         <button class="btn-sm" onclick="aclAddRule()">+ Add Rule</button>
+                        <!-- Shown only when editing an admin user's ACL. Lets the operator
+                             pick devices instead of typing prefixes — see Phase 5b. -->
+                        <button class="btn-sm" id="aclSelectDevicesBtn"
+                                onclick="openDevicePicker()" style="display:none;">+ Select Devices</button>
                     </div>
                     <p class="form-hint-sm">
                         Use prefix <code>*</code> with <code>rw</code> for unrestricted admin access.
                     </p>
 
+                    <!-- Shown only when editing an HMAC client's ACL. Lists admin users
+                         whose ACL covers this device's <app>/<client_id> namespace.
+                         Each name is clickable: closes this modal and opens the
+                         per-user ACL editor. Read-only relationship view. -->
+                    <div id="aclModalAdminsSection" class="acl-admins-section" style="display:none;">
+                        <h4>Admin users with access</h4>
+                        <ul id="aclModalAdminsList" class="acl-admins-list"></ul>
+                    </div>
+
                     <div class="modal-actions">
                         <button class="btn-sm" onclick="closeAclModal()">Cancel</button>
                         <button class="primary-btn" onclick="saveAcl()">Save Permissions</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Device picker modal — opened from the admin-user ACL editor.
+                 Multi-select; on confirm, adds <app>/<device> rw + <app>/public r
+                 rows to the underlying ACL form. -->
+            <div id="devicePickerModal" class="modal">
+                <div class="modal-content glass-panel">
+                    <span class="close-btn" id="devicePickerClose"
+                          onclick="closeDevicePicker()">&times;</span>
+                    <h3>Select devices</h3>
+                    <p class="form-hint">
+                        Each selected device adds <code>&lt;app&gt;/&lt;device&gt;</code> with <code>rw</code>
+                        and <code>&lt;app&gt;/public</code> with <code>r</code> (once per app, deduped against existing rules).
+                        Tweak access per row in the ACL editor afterwards.
+                    </p>
+                    <div id="devicePickerList" class="device-picker-list"></div>
+                    <div class="modal-actions">
+                        <button class="btn-sm" onclick="closeDevicePicker()">Cancel</button>
+                        <button class="primary-btn" id="devicePickerConfirm"
+                                onclick="confirmDevicePicker()" disabled>Add 0 device(s)</button>
                     </div>
                 </div>
             </div>

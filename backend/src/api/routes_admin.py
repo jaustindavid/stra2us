@@ -16,6 +16,7 @@ from api.dependencies import (
     require_admin_queue,
     require_admin_superuser,
     check_acl,
+    _prefix_matches,
 )
 from core.admin_auth import HTPASSWD_FILE, is_rescue_on_default
 from core.perf_log import PerfPhases, PERF_LOG_STREAM
@@ -97,6 +98,82 @@ async def list_keys(_: dict = Depends(require_admin_superuser)):
             "acl": acl
         })
     return result
+
+def _device_app_for_client(client_acl: dict, client_id: str) -> Optional[str]:
+    """Given a client's ACL, derive the app it belongs to. The
+    `provision_device` endpoint shapes the per-device ACL with a
+    `<app>/<client_id>` prefix; we recover `<app>` by finding that
+    prefix. Returns None if the client doesn't have a device-shaped
+    ACL (e.g., it's an internal probe with custom permissions)."""
+    for perm in client_acl.get("permissions", []):
+        prefix = perm.get("prefix", "")
+        if "/" in prefix:
+            head, tail = prefix.split("/", 1)
+            if tail == client_id:
+                return head
+    return None
+
+
+@router.get("/keys/{client_id}/admins")
+async def list_admins_for_device(client_id: str, _: dict = Depends(require_admin_superuser)):
+    """Return admin users whose ACL covers this device's
+    `<app>/<client_id>` resource path. Powers the "Admin users with
+    access" section in the device ACL editor — read-only relationship
+    view; mutation happens through the per-user ACL editor.
+
+    Computation: iterate `admin_acls:*`, for each user check whether
+    any prefix in their ACL matches `<app>/<client_id>` per the same
+    semantics `check_acl` uses (`*`, exact match, or parent-prefix).
+    Returns the most permissive matching access level per user (`rw`
+    wins over `r`).
+    """
+    redis = get_redis_client()
+    raw = await redis.get(f"client:{client_id}:secret")
+    if not raw:
+        raise HTTPException(status_code=404, detail="Client not found")
+    raw_acl = await redis.get(f"client:{client_id}:acl")
+    try:
+        client_acl = json.loads(raw_acl) if raw_acl else {"permissions": []}
+    except ValueError:
+        client_acl = {"permissions": []}
+
+    app = _device_app_for_client(client_acl, client_id)
+    if app is None:
+        # Not a device-shaped client (e.g. an internal probe with
+        # custom ACL). No app context, so we can't compute admins.
+        return {"client_id": client_id, "app": None, "admins": []}
+
+    resource_path = f"{app}/{client_id}"
+
+    acl_keys = await redis.keys("admin_acls:*")
+    admins = []
+    for k in acl_keys:
+        if isinstance(k, bytes):
+            k = k.decode("utf-8")
+        username = k[len("admin_acls:"):]
+        raw_user_acl = await redis.get(k)
+        if not raw_user_acl:
+            continue
+        try:
+            user_acl = json.loads(raw_user_acl)
+        except ValueError:
+            continue
+        max_access = None
+        for perm in user_acl.get("permissions", []):
+            prefix = perm.get("prefix", "")
+            if _prefix_matches(prefix, resource_path):
+                access = perm.get("access", "r")
+                if access == "rw":
+                    max_access = "rw"
+                    break  # already at max
+                if max_access is None:
+                    max_access = access
+        if max_access:
+            admins.append({"username": username, "access": max_access})
+
+    admins.sort(key=lambda a: a["username"])
+    return {"client_id": client_id, "app": app, "admins": admins}
+
 
 @router.post("/keys")
 async def create_client(client: ClientCreate, _: dict = Depends(require_admin_superuser)):

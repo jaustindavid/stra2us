@@ -359,6 +359,8 @@ function openAclModal(clientId) {
         permissions: (client.acl || {}).permissions || [],
         endpoint: `/keys/${clientId}/acl`,
         refresh: fetchKeys,
+        // Device-side editor: load the "admin users with access" panel.
+        deviceClientId: clientId,
     });
     aclEditingClientId = clientId;  // kept for any legacy reference
 }
@@ -371,10 +373,12 @@ function openAdminAclModalFor(username) {
         permissions: (entry.acl || {}).permissions || [],
         endpoint: `/admin_users/${encodeURIComponent(username)}/acl`,
         refresh: fetchAdminUsers,
+        // Admin-user-side editor: enable the device picker.
+        showDevicePicker: true,
     });
 }
 
-function _openAclEditor({ subjectLabel, permissions, endpoint, refresh }) {
+function _openAclEditor({ subjectLabel, permissions, endpoint, refresh, deviceClientId, showDevicePicker }) {
     _aclTarget = { endpoint, refresh };
     aclCurrentPermissions = permissions.map(p => ({...p}));
     aclNewAccess = 'rw';
@@ -385,6 +389,18 @@ function _openAclEditor({ subjectLabel, permissions, endpoint, refresh }) {
     toggle.textContent = 'rw';
     toggle.className = 'acl-access-toggle access-rw';
 
+    // Show/hide the per-context affordances:
+    // - device picker: only when editing an admin user (lets operator
+    //   click devices instead of typing prefixes)
+    // - admins-with-access: only when editing a client/device
+    document.getElementById('aclSelectDevicesBtn').style.display =
+        showDevicePicker ? '' : 'none';
+    if (deviceClientId) {
+        loadAdminsWithAccess(deviceClientId);
+    } else {
+        document.getElementById('aclModalAdminsSection').style.display = 'none';
+    }
+
     renderAclPermissions();
     document.getElementById('aclModal').style.display = 'block';
 }
@@ -394,6 +410,178 @@ function closeAclModal() {
     aclEditingClientId = null;
     aclCurrentPermissions = [];
     _aclTarget = null;
+}
+
+// --- Device picker (called from the admin-user ACL editor) ----------
+
+let _devicePickerSelected = new Set();   // "<app>/<device>" tokens
+
+async function openDevicePicker() {
+    const { ok, data: clients } = await fetchAPI('/keys');
+    if (!ok) {
+        alert('Failed to load device list.');
+        return;
+    }
+
+    // Group clients by app. A client's app is the head of its
+    // <app>/<client_id> ACL prefix (the "device on app" pattern from
+    // provision_device). Clients without that shape (internal probes,
+    // legacy custom-ACL clients) are skipped.
+    const byApp = {};
+    clients.forEach(c => {
+        const app = _deriveApp(c);
+        if (!app) return;
+        if (!byApp[app]) byApp[app] = [];
+        byApp[app].push(c.client_id);
+    });
+
+    _devicePickerSelected.clear();
+    const list = document.getElementById('devicePickerList');
+    const apps = Object.keys(byApp).sort();
+    if (apps.length === 0) {
+        list.innerHTML = '<p class="text-muted">No device-shaped clients found.</p>';
+    } else {
+        list.innerHTML = apps.map(app => {
+            const devices = byApp[app].sort();
+            return `
+                <div class="device-picker-app">
+                    <h4>${escapeHtml(app)}</h4>
+                    <ul>
+                        ${devices.map(d => {
+                            const token = `${app}/${d}`;
+                            // Pre-check if this device is already in the
+                            // ACL form, so the operator can see what's
+                            // already covered (still selectable — selecting
+                            // is idempotent thanks to the dedupe in
+                            // confirmDevicePicker).
+                            const already = aclCurrentPermissions.some(
+                                p => p.prefix === token
+                            );
+                            return `<li>
+                                <label>
+                                    <input type="checkbox"
+                                           data-token="${escapeHtml(token)}"
+                                           ${already ? 'disabled title="Already in ACL"' : ''}
+                                           onchange="_devicePickerToggle(this)">
+                                    ${escapeHtml(d)}${already ? ' <span class="text-muted">(already granted)</span>' : ''}
+                                </label>
+                            </li>`;
+                        }).join('')}
+                    </ul>
+                </div>
+            `;
+        }).join('');
+    }
+
+    _updateDevicePickerCount();
+    document.getElementById('devicePickerModal').style.display = 'block';
+}
+
+function _deriveApp(client) {
+    // Find the prefix shaped "<X>/<client_id>" — that's the "device
+    // on app" pattern, where <X> is the app name.
+    const perms = (client.acl && client.acl.permissions) || [];
+    for (const p of perms) {
+        const prefix = p.prefix || '';
+        const slash = prefix.indexOf('/');
+        if (slash >= 0 && prefix.substring(slash + 1) === client.client_id) {
+            return prefix.substring(0, slash);
+        }
+    }
+    return null;
+}
+
+function _devicePickerToggle(checkbox) {
+    const token = checkbox.dataset.token;
+    if (checkbox.checked) {
+        _devicePickerSelected.add(token);
+    } else {
+        _devicePickerSelected.delete(token);
+    }
+    _updateDevicePickerCount();
+}
+
+function _updateDevicePickerCount() {
+    const btn = document.getElementById('devicePickerConfirm');
+    const n = _devicePickerSelected.size;
+    btn.textContent = `Add ${n} device${n === 1 ? '' : 's'}`;
+    btn.disabled = (n === 0);
+}
+
+function closeDevicePicker() {
+    document.getElementById('devicePickerModal').style.display = 'none';
+    _devicePickerSelected.clear();
+}
+
+function confirmDevicePicker() {
+    // Per design decisions: <app>/<device> at rw, <app>/public at r,
+    // dedupe against any existing rules so re-applying the picker is
+    // safe.
+    const apps = new Set();
+    _devicePickerSelected.forEach(token => {
+        const slash = token.indexOf('/');
+        const app = token.substring(0, slash);
+        apps.add(app);
+        if (!aclCurrentPermissions.some(p => p.prefix === token)) {
+            aclCurrentPermissions.push({prefix: token, access: 'rw'});
+        }
+    });
+    apps.forEach(app => {
+        const publicPrefix = `${app}/public`;
+        if (!aclCurrentPermissions.some(p => p.prefix === publicPrefix)) {
+            aclCurrentPermissions.push({prefix: publicPrefix, access: 'r'});
+        }
+    });
+    closeDevicePicker();
+    renderAclPermissions();
+}
+
+// --- Admin users with access (device-side ACL editor) ---------------
+
+async function loadAdminsWithAccess(clientId) {
+    const section = document.getElementById('aclModalAdminsSection');
+    section.style.display = 'block';
+    const list = document.getElementById('aclModalAdminsList');
+    list.innerHTML = '<li class="text-muted">Loading...</li>';
+
+    const { ok, data } = await fetchAPI(
+        `/keys/${encodeURIComponent(clientId)}/admins`
+    );
+    if (!ok) {
+        list.innerHTML = '<li class="text-muted">Failed to load.</li>';
+        return;
+    }
+    if (data.app === null) {
+        // Not a device-shaped client; the relationship view doesn't apply.
+        section.style.display = 'none';
+        return;
+    }
+    if (!data.admins || data.admins.length === 0) {
+        list.innerHTML = '<li class="text-muted">No admins have access to this device.</li>';
+        return;
+    }
+    list.innerHTML = data.admins.map(a => {
+        const uname = escapeHtml(a.username);
+        const access = escapeHtml(a.access);
+        return `<li>
+            <a href="#" onclick="event.preventDefault(); jumpToAdminUser('${uname}')">${uname}</a>
+            <span class="badge access-${access}" style="margin-left:8px;">${access}</span>
+        </li>`;
+    }).join('');
+}
+
+async function jumpToAdminUser(username) {
+    // Per design decision #3: clean stack. Close the current device
+    // ACL modal, then open the user's ACL modal.
+    closeAclModal();
+    // Switch to the admin_users view so the user is on the right page
+    // when the modal closes.
+    const link = document.querySelector('.nav-links a[data-target="admin_users"]');
+    if (link) link.click();
+    // The view-switching click handler triggers fetchAdminUsers; await
+    // explicitly so the user data is in _adminUsersById before we open.
+    await fetchAdminUsers();
+    openAdminAclModalFor(username);
 }
 
 function renderAclPermissions() {
