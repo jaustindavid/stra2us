@@ -341,3 +341,165 @@ the asset pipeline.
   the if-none-match dance for explicit cache-clear cases. P3's
   renderer just needs to read `meta.sha256[:8]` and append it as
   `?v=`.
+
+---
+
+## P2 — Theme stylesheet *(in review — drafted 2026-05-08)*
+
+**Status:** code complete, 168 tools + 100 backend tests green
+(+50 backend from P1), awaiting staging redeploy + manual
+walkthrough sign-off.
+
+### Deliverables landed
+
+| Plan item | Path | Notes |
+|---|---|---|
+| Parameterized CSS serializer | [`backend/src/services/theme_serializer.py`](../backend/src/services/theme_serializer.py) | `serialize_theme_css(app, theme)` re-validates every value (hex regex / font allowlist / app-slug regex) before emit; `theme_hash(theme)` returns 8-hex-char SHA-256 prefix from JSON-with-sort_keys for stable cache-bust. |
+| `GET /app/<app>/_theme.css` route | [`backend/src/api/routes_app_theme.py`](../backend/src/api/routes_app_theme.py) | Public; reads `_catalog/<app>` from KV, parses, calls serializer; `Cache-Control: public, max-age=31536000, immutable`; ETag = sha256 prefix; 404 only when no catalog published. |
+| Auth-middleware exception | [`backend/src/main.py`](../backend/src/main.py) `_path_needs_admin_auth` | New rule for `*/_theme.css` matching the `_assets/` shape. |
+| Page wrapper | [`backend/src/static/app/device.html`](../backend/src/static/app/device.html) + [`backend/src/api/routes_app.py`](../backend/src/api/routes_app.py) | `device.html` carries `{{APP}}` / `{{THEME_HASH}}` placeholders; `device_page` reads catalog theme and substitutes via the new `_render_device_page` helper. Template cached per-process after first read. |
+| Base stylesheet refactor | [`backend/src/static/app/styles.css`](../backend/src/static/app/styles.css) | Renamed themable subset to `--app-bg`/`--app-text`/`--app-primary`/`--app-accent`/`--app-font`. Stra2us-owned vars (`--muted`/`--border`/`--danger`/`--panel`/`--radius`) unchanged. Added 2 new vars (`--app-accent`, `--app-font`). 17 references threaded through to the new names per the audit table. |
+| pyyaml backend dep | [`backend/requirements.txt`](../backend/requirements.txt) | Server now reads catalog YAML directly (was a relay-only path before P2). Pinned `pyyaml==6.0.3`. |
+
+### Test counts
+
+* Backend: **100 passing** (was 50). +50 P2: 33 `test_theme_serializer` (incl. 13 adversarial corpus entries) + 10 `test_app_theme` + 7 `test_device_page_render`.
+* Tools: **168 passing + 30 skipped**, unchanged — P2 doesn't touch CLI.
+
+### Adversarial corpus
+
+The serializer test corpus exercises every escape vector the FR
+calls out + a few neighbors:
+
+* CSS-injection via terminating-brace + new rule (`#fff; } body { background: red`)
+* Function-call smuggling (`#5b3fb8) expression(alert(1))`)
+* Comment-out trickery (`#fff /* */ } body { color: red`)
+* Newline / quote injection (`"#fff\n"`, `'#fff"'`, `"#fff'"`)
+* Bare keyword colors (`red`)
+* `var()` recursion / `url()` / external-host references
+* Empty-ish (`""`, `"#"`, `"#zzzzzz"`, `"##fff"`)
+* Bad app slugs (selector-escape attempts, SQL-shaped, uppercase, leading underscore)
+* Non-string types (int/None/bool/list/dict in a color slot)
+* Disallowed font families (`Comic Sans MS`, comma-chains, `url()`-shaped, web-style names)
+
+Every one is silently dropped; the rule body never gains a second
+declaration nor an escape-out. `test_lint_bypass_color_silently_dropped`
+also runs an end-to-end version through the route — proving the
+defense holds even when a malformed value reaches KV directly
+(bypassing publish-time lint entirely).
+
+### Deviations from plan
+
+1. **`<body data-app="…">` instead of `<section data-app="…">`.**
+   The FR says `<section>`; the existing customer page has only
+   one section per body, and the body is the entire customer
+   surface (admin chrome lives at `/admin/*` on a separate page
+   tree). Putting `data-app` on the body covers everything
+   including the modal overlay without adding a new wrapper
+   element. Same scope guarantee — the selector
+   `[data-app="critterchron"]` matches the body, custom
+   properties cascade to all descendants. No bleed risk into
+   admin chrome (different `<body>`). If a future change adds
+   admin-chrome to the same page, easy to move `data-app` to a
+   new wrapping `<section>` then.
+
+2. **Hover-tint uses `color-mix()` instead of hard-coded
+   `rgba(39,84,197,0.06)`.** Pre-P2, `.reveal-btn:hover` and
+   `.edit-btn:hover` used a literal rgba of the un-themed
+   `--accent` color. Post-P2 they use
+   `color-mix(in srgb, var(--app-primary) 6%, transparent)` so
+   the hover wash follows the vendor's primary color. Browser
+   support: Safari 16.4+, Chrome 111+, FF 113+ — modern enough
+   for the customer page's audience. Older browsers fall back to
+   no hover background (the cursor + border still indicate the
+   affordance). Acceptable degradation; flagged here so a future
+   reader knows the intent.
+
+3. **`pyyaml` added as a backend dep.** Pre-P2, the server only
+   stored / relayed catalog YAML bytes — never parsed. P2's theme
+   route needs to extract the `theme:` block server-side, so
+   `pyyaml` joins the requirements pin. Same library the CLI
+   uses; tiny + ubiquitous. Mentioned here because it's a new
+   import surface on the backend.
+
+4. **Template caching at module level.** `_render_device_page`
+   reads `device.html` once per process via `_device_template()`.
+   Tests have an `autouse` fixture that resets the cache so
+   working-tree changes show up immediately during `pytest -q`.
+   This is the simplest way to avoid disk reads on the hot path
+   without introducing a real template engine; if Jinja2 ever
+   shows up here, this caching layer can go.
+
+### Open question resolutions
+
+| Open Q | Decision | Where |
+|---|---|---|
+| Where to put `data-app` (FR: `<section>`) | `<body>` for v1; refactor if admin chrome ever shares the page | `device.html` + this doc |
+| Theme hash source | JSON-with-sort_keys of the parsed `theme:` dict, first 8 hex of SHA-256 | `theme_serializer.theme_hash` |
+| Hover-tint color when primary is themed | `color-mix(in srgb, …, transparent)` | `styles.css` |
+| Empty-theme rendering | Empty-body rule (`[data-app="x"] {\n}\n`) — page falls back to `:root` defaults | `theme_serializer` + `routes_app_theme` |
+| Catalog-not-published rendering | 404 from theme route + browser inline-default fallback; `<link>` still emitted from page wrapper | `routes_app_theme.serve_theme` + `_render_device_page` |
+
+### Sign-off checklist (anticipated; final form awaits walkthrough)
+
+| Item | Status |
+|---|:---:|
+| All automated tests green (incl. adversarial) | ✅ 168 tools + 100 backend |
+| Theme applies to vendor section only | ✅ `[data-app="…"]` selector — admin chrome on separate page tree |
+| Default fallbacks kick in for missing keys | ✅ `var(--app-x, <default>)` in styles.css; tested via `test_partial_theme_emits_only_set_keys` |
+| No CSP violations | ⏳ awaits staging redeploy — same-origin `<link>`, no inline `<style>`, fits under `style-src 'self'` by construction |
+| Walkthrough 1–5 behave as described | ⏳ awaits staging redeploy |
+
+### Walkthrough (pending staging redeploy)
+
+| Step | Plan | Status |
+|---|---|:---:|
+| 1. Publish critterchron's theme with brand colors and logo | Re-publish `tools/examples/critterchron_v2.s2s.yaml` (already has theme block) — bytes unchanged, theme hash drives the cache-bust | ⏳ |
+| 2. Open customer page; confirm vendor section background/primary/accent match catalog; `product_name`/`logo` appear in chrome (basic placement); admin chrome NOT themed | Browser-side; will need a test admin to log in and visit `/app/critterchron/<device>` | ⏳ |
+| 3. View page source; confirm `<link rel="stylesheet" href="/app/critterchron/_theme.css?v=…">` present | curl-able once auth bypass available, otherwise browser dev tools | ⏳ |
+| 4. Network tab: `_theme.css` loads with correct cache headers | Browser dev tools | ⏳ |
+| 5. Republish theme with different colors; cache-bust URL changes; refresh shows new colors | Edit theme block in YAML, republish, observe new ETag/`?v=` and new colors | ⏳ |
+
+### Items deferred / followups
+
+1. **Theme block in `product_name`/`logo` chrome.** The FR
+   mentions placing `product_name` and the logo asset in the
+   page chrome ("where P3 will refine — for P2, basic placement
+   is sufficient"). P2 wires the `data-app` attribute and theme
+   variables; actually rendering the logo + product name in the
+   header lives in P3's renderer dispatch.
+
+2. **Admin chrome CSP audit.** P2 is the first phase that adds
+   a per-app `<link rel="stylesheet">` from a different
+   sub-path. Should be CSP-clean (`style-src 'self'` covers
+   it), but P5's audit will confirm — no new violations should
+   appear in the Report-Only telemetry.
+
+3. **YAML 1.1 truthy-enum doc note.** Still pending from P0 —
+   FR's combined example uses bare `off` in an enum list, the
+   parser rejects, doc clarification would save copy-paste users
+   the trouble.
+
+### Rollback
+
+Reverting P2's commits leaves staging on P1 (asset pipeline +
+serve route still work; no theme stylesheet route; device.html
+served as a static file again). The publish flow doesn't change
+between P1 and P2; previously-published catalogs continue to
+work. No data migration involved — `_catalog/<app>` is
+unchanged; the serializer simply ignores the `theme:` block when
+the route isn't loaded.
+
+### Deploy notes
+
+* New backend dep (`pyyaml`) — the redeploy needs to rebuild
+  the image (which `tools/stage deploy` does via
+  `docker compose up --build`). Same-shape lesson from P1: the
+  layered docker cache rebuilds the requirements step, which
+  is the only step that's slow.
+* Two new files in `backend/` (`services/theme_serializer.py`,
+  `api/routes_app_theme.py`) plus the new `services/`
+  directory's `__init__.py`. Modified files: `main.py`,
+  `requirements.txt`, `routes_app.py`, `static/app/device.html`,
+  `static/app/styles.css`. Tests: 3 new files in
+  `backend/tests/`.

@@ -11,6 +11,7 @@ from api.routes_device import router as device_router
 from api.routes_admin import router as admin_router
 from api.routes_app import router as app_router
 from api.routes_app_assets import router as app_assets_router
+from api.routes_app_theme import router as app_theme_router
 from api.routes_oauth import router as oauth_router
 from middleware.csp import CSPMiddleware, router as csp_router
 from core import oauth as oauth_config
@@ -81,6 +82,12 @@ def _path_needs_admin_auth(path: str) -> bool:
                       # tags). Same `_`-prefixed reserved-namespace
                       # convention as `/app/_static/`. See
                       # backend/src/api/routes_app_assets.py.
+    if path.startswith("/app/") and path.endswith("/_theme.css"):
+        return False  # per-app theme stylesheet — public-by-design.
+                      # Body is hex colors + allowlisted font names;
+                      # nothing sensitive. Customer page references
+                      # via <link rel="stylesheet">. See
+                      # backend/src/api/routes_app_theme.py.
     if path.startswith("/api/app/"):
         return False  # public lookup endpoints
     if path == "/api/_csp_report":
@@ -335,6 +342,11 @@ app.mount("/app/_static", StaticFiles(directory=APP_STATIC_DIR), name="app-stati
 # `/app/{app}/{device}` (which would otherwise capture
 # `_assets` as a device name).
 app.include_router(app_assets_router, tags=["app-assets"])
+
+# Per-app theme stylesheet (P2 of fr_catalog_app_ui_plan.md).
+# Same mount-order rationale: `_theme.css` is a reserved name that
+# would otherwise be captured as a device id by /app/{app}/{device}.
+app.include_router(app_theme_router, tags=["app-theme"])
 
 # No prefix on the router — routes_app declares its own (`/app/...` and
 # `/api/app/...`) so the route handlers' paths read naturally and

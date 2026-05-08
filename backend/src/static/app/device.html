@@ -1,12 +1,21 @@
 <!doctype html>
+<!--
+  Per-app branding placeholders {{APP}} and {{THEME_HASH}} are
+  substituted at request time by `device_page` in
+  backend/src/api/routes_app.py before this file is served. The
+  `data-app="<slug>"` on <body> is what the per-app theme stylesheet
+  scopes its `--app-*` custom-property overrides to. P2 of
+  docs/fr_catalog_app_ui_plan.md.
+-->
 <html lang="en">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Device</title>
     <link rel="stylesheet" href="/app/_static/styles.css?v=3">
+    <link rel="stylesheet" href="/app/{{APP}}/_theme.css?v={{THEME_HASH}}">
 </head>
-<body class="app-page app-device-page">
+<body class="app-page app-device-page" data-app="{{APP}}">
     <main class="app-device">
         <header class="device-header">
             <!-- Filled in by app.js after `/api/admin/me` and the catalog

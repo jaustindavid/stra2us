@@ -26,10 +26,11 @@ prevent device-name enumeration; not enforced at this layer.
 
 import os
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from core.redis_client import get_redis_client
 from api.dependencies import get_admin_context, check_acl
+from api.routes_app_theme import load_theme
 
 
 router = APIRouter()
@@ -40,6 +41,46 @@ router = APIRouter()
 STATIC_DIR = os.path.normpath(
     os.path.join(os.path.dirname(__file__), "..", "static", "app")
 )
+
+
+# Cached on first read so we don't re-touch disk on every device-page
+# render. The customer page is small (~1.5 KB) and changes only when
+# a new container image ships; in-process caching is correct + cheap.
+_DEVICE_TEMPLATE: str | None = None
+
+
+def _device_template() -> str:
+    """Read `device.html` once per process. Returns the template
+    string (with `{{APP}}` / `{{THEME_HASH}}` placeholders intact)
+    for `_render_device_page` to substitute."""
+    global _DEVICE_TEMPLATE
+    if _DEVICE_TEMPLATE is None:
+        with open(os.path.join(STATIC_DIR, "device.html")) as fh:
+            _DEVICE_TEMPLATE = fh.read()
+    return _DEVICE_TEMPLATE
+
+
+async def _render_device_page(app: str) -> HTMLResponse:
+    """Substitute the per-app branding placeholders in `device.html`
+    and return as HTML.
+
+    `{{APP}}` is the catalog slug (already constrained to
+    `^[a-z][a-z0-9_]*$` by the catalog schema; selector-safe with no
+    escaping). `{{THEME_HASH}}` comes from the catalog's theme block
+    via the same `load_theme` helper the `_theme.css` route uses, so
+    the page's `<link>` URL and the route the browser fetches share
+    a hash by construction. Empty hash when no catalog/theme is
+    published — the per-app stylesheet's empty-rule fallback covers
+    that case.
+    """
+    template = _device_template()
+    _, theme_hash = await load_theme(app)
+    rendered = (
+        template
+        .replace("{{APP}}", app)
+        .replace("{{THEME_HASH}}", theme_hash or "")
+    )
+    return HTMLResponse(content=rendered)
 
 
 @router.get("/app", include_in_schema=False)
@@ -78,7 +119,7 @@ async def device_page(app: str, device: str, request: Request):
             os.path.join(STATIC_DIR, "landing.html"),
             status_code=404,
         )
-    return FileResponse(os.path.join(STATIC_DIR, "device.html"))
+    return await _render_device_page(app)
 
 
 @router.get("/api/app/lookup_device", include_in_schema=False)

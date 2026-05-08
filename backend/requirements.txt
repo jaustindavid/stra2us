@@ -27,3 +27,9 @@ requests==2.33.1
 markdown-it-py==4.2.0
 bleach==6.3.0
 defusedxml==0.7.1
+# Catalog YAML parsing on the server (P2 — theme stylesheet route
+# in backend/src/api/routes_app_theme.py + the device_page
+# handler's theme-hash lookup). Same library the CLI uses; we add
+# it here because the server now reads `_catalog/<app>` directly,
+# rather than just relaying the bytes.
+pyyaml==6.0.3
