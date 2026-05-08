@@ -113,6 +113,21 @@
   work" on a fresh host) but applies to any prod-on-a-new-machine
   recovery scenario.
 
+- **Mobile-friendly customer app page.** The customer-facing
+  `/app/<app>/<device>/...` page is desktop-leaning today (table
+  layouts, smallish touch targets, no viewport meta). Customers
+  configuring a critterchron from their phone deserve a usable
+  experience: viewport meta tag, fluid layout, touch-sized
+  controls (40px+ tap targets), input types that trigger the
+  right mobile keyboards (`type=number`, `type=email`, `type=tel`,
+  etc.), responsive breakpoints. Bundles naturally with the
+  catalog widget + theming work in
+  [`docs/fr_catalog_app_ui.md`](docs/fr_catalog_app_ui.md) since
+  both touch the customer UI surface — could be folded into that
+  FR's implementation pass, or done as a small separate sweep
+  beforehand. Admin UI mobile is a separate (lower-priority)
+  concern; this entry is specifically about the customer surface.
+
 - **Implement Basic Auth brute-force detection & lockout.** FR is
   in [`docs/fr_basic_auth_lockout.md`](docs/fr_basic_auth_lockout.md).
   Sliding-window failure counter keyed by `(source_ip, username)`,

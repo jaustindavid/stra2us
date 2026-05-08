@@ -8,6 +8,13 @@ dependencies = [
     "msgpack>=1.0",
     "requests>=2.28",
     "pydantic>=2.0",
+    # Catalog publish-time sanitizers (see docs/fr_catalog_app_ui.md).
+    # markdown-it-py + bleach: render + allowlist-sanitize markdown
+    # blocks. defusedxml: parse SVG assets safely (no XML-bombs / no
+    # external entities) before the hand-rolled allowlist walker.
+    "markdown-it-py>=3.0",
+    "bleach>=6.0",
+    "defusedxml>=0.7",
 ]
 
 [project.scripts]

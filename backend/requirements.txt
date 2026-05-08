@@ -19,3 +19,11 @@ pytest==9.0.3
 # the token-exchange call uses.
 google-auth==2.50.0
 requests==2.33.1
+# Catalog UI sanitizers (see docs/fr_catalog_app_ui.md). The server
+# renders catalog markdown blocks at request time using the same
+# allowlist sanitizer the CLI runs at publish time — one
+# implementation, two callers. defusedxml lets us re-parse SVG
+# assets safely if a verification path ever needs to.
+markdown-it-py==4.2.0
+bleach==6.3.0
+defusedxml==0.7.1

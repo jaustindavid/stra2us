@@ -11,6 +11,7 @@ from api.routes_device import router as device_router
 from api.routes_admin import router as admin_router
 from api.routes_app import router as app_router
 from api.routes_oauth import router as oauth_router
+from middleware.csp import CSPMiddleware, router as csp_router
 from core import oauth as oauth_config
 
 app = FastAPI(title="IoT Telemetry Service")
@@ -75,6 +76,12 @@ def _path_needs_admin_auth(path: str) -> bool:
                       # reserved-namespace convention from `_catalog/`
     if path.startswith("/api/app/"):
         return False  # public lookup endpoints
+    if path == "/api/_csp_report":
+        return False  # browsers POST CSP violations same-origin without
+                      # a session — the underscore-prefixed reserved
+                      # namespace marks this as server metadata, not
+                      # an admin-action endpoint. See
+                      # backend/src/middleware/csp.py.
     if path.startswith("/app/"):
         return True   # /app/<app>/<device>/... — auth required
     return False
@@ -232,6 +239,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Content Security Policy. Ships in Report-Only on every route per
+# P0 of docs/fr_catalog_app_ui_plan.md — collect violations, no
+# customer-facing behavior change. P3 adds `/app/<app>/<device>/`
+# to `enforce_path_prefixes`; P5 flips the rest after the audit.
+app.add_middleware(CSPMiddleware)
+app.include_router(csp_router, tags=["csp"])
 
 # Admin API
 app.include_router(admin_router, prefix="/api/admin", tags=["admin"])

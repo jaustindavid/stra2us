@@ -37,6 +37,29 @@ Scope = Literal["app", "device"]
 VarType = Literal["int", "float", "string", "bool", "enum"]
 
 
+class EnumChoice(BaseModel):
+    """Object form of a UI enum choice (`{value, label}`).
+
+    Distinct from `Var.values` (the existing storage-level enum on
+    `type: enum`), which is a flat list of string values. The
+    `enum:` field-level hint introduced for the customer-facing UI
+    (`docs/fr_catalog_app_ui.md`) accepts either flat strings or
+    these `{value, label}` objects so vendors can ship pretty
+    labels without changing the wire value.
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    value: str | int
+    label: str
+
+
+# Renderer-hint widget vocabulary. Closed set on purpose — see
+# `docs/fr_catalog_app_ui.md` "Renderer dispatch". Unknown values
+# fall through to the type-default at render time, so adding a new
+# widget here is an additive change without breaking older catalogs.
+Widget = Literal["slider", "secret", "radio"]
+
+
 class Var(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -52,6 +75,21 @@ class Var(BaseModel):
     ops_only: bool = False
     read_cadence: str | None = None
     enforce: bool = False
+    # ----- customer-facing UI hints (docs/fr_catalog_app_ui.md) -----
+    # All optional; a var with none of these renders the same as
+    # before. Lint (`tools/stra2us_cli/catalog_lint.py`) enforces
+    # cross-field constraints (e.g. `min`/`max` only on numeric
+    # types, mutually-exclusive with the existing `range:`).
+    enum: list[str | int | EnumChoice] | None = None
+    min: int | float | None = None
+    max: int | float | None = None
+    step: int | float | None = None
+    widget: Widget | None = None
+    multiline: bool = False
+    max_length: int | None = None
+    pattern: str | None = None
+    help_markdown: str | None = None
+    write_only: bool = False
     # Consumer-side hint that this key carries sensitive material and
     # must be stored + served encrypted (Stra2us per-record encrypted
     # flag, ext type 0x21 wire format). Stra2us itself does not act on
@@ -85,6 +123,26 @@ class Var(BaseModel):
     def _unique_scope(cls, v: list[Scope]) -> list[Scope]:
         if len(set(v)) != len(v):
             raise ValueError("scope entries must be unique")
+        return v
+
+    @field_validator("enum", mode="before")
+    @classmethod
+    def _reject_yaml_truthy_enum(cls, v):
+        # YAML 1.1's `off`/`on`/`yes`/`no` parse as Python booleans,
+        # which then coerce silently into `int(0)`/`int(1)` via this
+        # field's `str | int | EnumChoice` union. A catalog author
+        # writing `enum: [clock, weather, off]` would get `0` in
+        # place of the string `"off"` — a footgun.
+        # Reject and tell them to quote.
+        if isinstance(v, list):
+            for i, entry in enumerate(v):
+                if isinstance(entry, bool):
+                    raise ValueError(
+                        f"enum[{i}]: bare YAML boolean ({entry!r}) — quote "
+                        f"the value (likely 'off'/'on'/'yes'/'no'); these "
+                        f"are YAML 1.1 truthy literals that silently "
+                        f"become Python bools"
+                    )
         return v
 
     @model_validator(mode="after")
@@ -156,12 +214,45 @@ class Var(BaseModel):
         return self
 
 
+class Theme(BaseModel):
+    """App-level theme block (docs/fr_catalog_app_ui.md Part 2).
+
+    Parser-level shape only — keys are all optional strings. Lint
+    enforces format constraints (hex colors, font allowlist,
+    asset-must-exist, length caps) so the rules live in one
+    place that both the CLI and the server call.
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    primary_color: str | None = None
+    accent_color: str | None = None
+    bg_color: str | None = None
+    text_color: str | None = None
+    font_family: str | None = None
+    logo_asset: str | None = None
+    logo_alt: str | None = None
+    product_name: str | None = None
+
+
+class Ui(BaseModel):
+    """App-level UI block — markdown blobs at fixed page positions
+    (docs/fr_catalog_app_ui.md Part 2 "Markdown blocks"). Sanitized
+    server-side at render time; the catalog stores the raw markdown.
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    header_markdown: str | None = None
+    footer_markdown: str | None = None
+
+
 class Catalog(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     app: str
     vars: dict[str, Var]
     version: int = 1
+    theme: Theme | None = None
+    ui: Ui | None = None
 
     # App-level fields driving the `/app/<app>/<device>` customer view
     # (see docs/fr_application_view.md). Both optional — apps that
