@@ -9,10 +9,11 @@ picking up the next phase.*
 
 ---
 
-## P0 — Foundations *(in review — drafted 2026-05-07)*
+## P0 — Foundations *(signed off 2026-05-07)*
 
-**Status:** code complete, automated tests green, awaiting manual
-walkthrough sign-off.
+**Status:** ✅ shipped. Code complete, 39 backend + 148 tools tests
+green, walkthrough run end-to-end against staging, operator
+sign-off recorded.
 
 ### Deliverables landed
 
@@ -115,21 +116,21 @@ directory; cases are in-line in the test files for easier grep.
 | All automated tests green in CI | ✅ | 39 backend + 148 tools |
 | Lint catches every documented error case | ✅ | 38 lint tests; every row of the FR's lint table covered |
 | Sanitizer test corpora pass with zero leaks | ✅ | 27 markdown + 20 SVG; OWASP cheatsheet vectors included |
-| CSP Report-Only header present on every route | ✅ | Asserted in middleware tests; wired in [main.py](../backend/src/main.py) |
-| CSP report sink documented | ✅ | Module docstring + this entry; `/api/_csp_report` + `stra2us.csp` logger |
-| No customer-facing behavior change in staging | ✅ | No routes serve content; module not wired into any page |
+| CSP Report-Only header present on every route | ✅ | Verified live on staging across 200/401 + public/admin paths; full FR policy with `report-uri /api/_csp_report` and `Reporting-Endpoints` binding |
+| CSP report sink documented | ✅ | `/api/_csp_report` returns 204 on staging for both Level 2 (`application/csp-report`) and Level 3 (`application/reports+json`) shapes; logs at WARNING under the `stra2us.csp` logger |
+| No customer-facing behavior change in staging | ✅ | 10/10 staging smoke tests passed twice (initial deploy and post-`main.py`-fix redeploy); no routes serve content; module not wired into any page |
 
 ### Manual walkthrough
 
-Plan's P0 walkthrough has 4 steps. Step 4 is browser-side and ready
-to drive through the preview pane; steps 1–3 need decisions.
+Plan's P0 walkthrough has 4 steps. All ran against the staging
+deploy of `origin/catalog-app-ui` on 2026-05-07.
 
-| Step | Status | Plan |
+| Step | Status | Notes |
 |---|:---:|---|
-| 1. Publish a fixture catalog with valid `theme:` + `ui:` blocks | ⏳ | Existing `stra2us catalog publish` command works on the new schema (parser is additive). Needs a staging server and credentials to exercise; can also be unit-checked via the round-trip test pattern in `test_catalog_ui_fields.py::test_combined_critterchron_example_loads`. |
-| 2. Publish three deliberately-broken catalogs | ⚠️ | **Lint not yet wired into `cmd_catalog_publish`.** Module is built and unit-tested; integration into the CLI's publish path is the question below. |
-| 3. CSP Report-Only header on every backend response | ⏳ | Wired and unit-tested; `curl -I` against staging is the on-server check. |
-| 4. JS module test harness in browser | ▶ | Reachable at `/app/_static/forms/_test_harness.html` once the dev server is running. |
+| 1. Publish a fixture catalog with valid `theme:` + `ui:` blocks; stash byte-equals on read | ✅ | `tools/examples/critterchron_v2.s2s.yaml` (5040 bytes, 8 vars, full theme + ui) published to staging; round-tripped via `stra2us catalog fetch` byte-identical (`diff -q` clean). |
+| 2. Publish three deliberately-broken catalogs | ⏭ | **Skipped at P0.** Lint module is built and unit-tested (38 tests covering every error case) but not yet wired into `cmd_catalog_publish`. Deferred to P1's first commit, where the publish path is being extended anyway — keeps the user-visible "publish started rejecting things" change inside one phase. See "Items deferred / followups" below. |
+| 3. CSP Report-Only header on every backend response | ✅ | Verified live on staging: `Content-Security-Policy-Report-Only` header carries the full FR policy on `/health` (200), `/app/` (200), and `/admin/` (401); `Reporting-Endpoints` header binds `csp-endpoint`; `POST /api/_csp_report` returns 204 for both Level 2 and Level 3 report shapes. |
+| 4. JS module test harness in browser | ✅ | Harness page reachable at `/app/_static/forms/_test_harness.html`; module loads as `<script type="module">`; operator drove the form interactively and confirmed the FR's behaviors (dirty flip on input/change, live `data-valid` red/green on `start_time`, `ir_brightness` snap-on-edit with `data-original=129`, `wifi_password` omitted from `serialize` output when untouched and present when touched). |
 
 ### Items deferred / followups
 
@@ -169,3 +170,23 @@ the merge commit; no data migration involved. New deps
 [`tools/pyproject.toml`](../tools/pyproject.toml) and
 [`backend/requirements.txt`](../backend/requirements.txt) — revert
 removes them with the rest of the change.
+
+### Deploy notes
+
+* Initial staging deploy from `catalog-app-ui` failed because the
+  modified `main.py` / `catalog.py` / `pyproject.toml` /
+  `requirements.txt` weren't on the branch — the *new* files
+  copied cleanly but the *modified* ones were missed in the copy
+  step. Symptom: smoke tests passed (the static files shipped) but
+  the CSP middleware wasn't running and `/api/_csp_report`
+  returned 404. Lesson: when staging the next phase, double-check
+  modified files alongside new ones — `git status` on the working
+  tree before commit catches this in one glance.
+* `tools/stage deploy <ref>` works fine for branch deploys but
+  needs the fully-qualified remote ref (`origin/catalog-app-ui`)
+  rather than the bare branch name when the staging host has
+  never checked out the branch locally — the script's
+  `git checkout -B staging-current $ref` won't auto-DWIM under
+  `-B`. Worth a one-line note in [staging_environment.md](staging_environment.md)
+  or the `tools/stage help` text. *(Filed as a P1 followup
+  rather than a fix here, since it doesn't block the phase.)*
