@@ -25,7 +25,20 @@
 // form via the standalone `forms/touched_state.js` module from P0;
 // this file does not duplicate that work.
 
+// `<script type="module">` runs in strict mode automatically; the
+// pragma is informational for anyone reading the file directly.
 'use strict';
+
+// Touched-state form behavior (P0 module, wired in P4). The module
+// reads `data-original` / `data-write-only` / `data-valid` from the
+// server-rendered widgets and produces a per-field dirty-aware
+// payload via `serialize(form)`. `attachSubmitHandler` intercepts
+// browser-native submit so we can POST that payload via fetch.
+import {
+    init as initTouchedState,
+    serialize as serializeForm,
+    attachSubmitHandler,
+} from './forms/touched_state.js';
 
 const ADMIN_API = '/api/admin';
 const APP_API   = '/api/app';
@@ -81,7 +94,7 @@ function initLanding() {
     const form = $('#lookupForm');
     if (!form) return;
 
-    const input = $('#deviceNameInput');
+    const input = $('#deviceName');
     const button = form.querySelector('button[type="submit"]');
     const message = $('#lookupMessage');
 
@@ -147,6 +160,20 @@ function initDevice() {
     const nameEl = $('#deviceName');
     if (nameEl) nameEl.innerText = _state.deviceId;
 
+    // Wire the touched-state form behavior (P4). The page_renderer
+    // emits exactly one `<form class="catalog-form">`. init() binds
+    // dirty + live-pattern listeners; attachSubmitHandler intercepts
+    // submit so we POST the per-field payload via fetch instead of
+    // the browser's default form submit. Without this, the browser
+    // would post the raw form-control values — including the
+    // visually-clamped (off-spec) values + the empty write_only
+    // fields — and stomp the customer's data.
+    const form = $('.catalog-form');
+    if (form) {
+        initTouchedState(form);
+        attachSubmitHandler(form, onFormSubmit);
+    }
+
     // Bind the Reveal-button flow once at page load. The buttons
     // themselves are rendered server-side by page_renderer for
     // encrypted non-write_only fields.
@@ -160,6 +187,75 @@ function initDevice() {
     document.addEventListener('visibilitychange', () => {
         if (!document.hidden) refreshTelemetry();
     });
+}
+
+// =====================================================================
+// FORM SUBMIT (P4)
+//
+// `attachSubmitHandler` calls this with the touched-state-aware
+// payload + the submit event. We preventDefault, build a
+// urlencoded body from the payload, POST to the form's action, and
+// reload on success so the page re-renders with the now-stored
+// values. The server-side handler (`backend/src/api/routes_app_form.py`)
+// iterates whatever fields it received and writes them — fields
+// the JS omitted (untouched write_only) never reach the server,
+// so the prior KV value is preserved by absence.
+// =====================================================================
+
+async function onFormSubmit(payload, event) {
+    event.preventDefault();
+    const form = event.target;
+
+    // Visually disable the submit button so a customer who clicks
+    // twice doesn't fire two POSTs in flight (the second would race
+    // and likely succeed too, but the optics are worse).
+    const submitBtn = form.querySelector('button[type="submit"]');
+    if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.dataset.savingOriginalText = submitBtn.innerText;
+        submitBtn.innerText = 'Saving…';
+    }
+
+    // Build form-urlencoded body. URLSearchParams handles all the
+    // escaping; mirrors what the browser would send for a native
+    // POST with `enctype="application/x-www-form-urlencoded"`. Same
+    // wire format the server's strict-naive handler from P3 already
+    // accepts — no server change needed for P4.
+    const body = new URLSearchParams();
+    for (const [k, v] of Object.entries(payload)) {
+        body.append(k, v);
+    }
+
+    let ok = false;
+    try {
+        const r = await fetch(form.action, {
+            method: 'POST',
+            body,
+            // 'follow' (default) lets fetch chase the 303 redirect
+            // back to the GET. We don't use the response body — we
+            // just need to know the POST landed.
+            credentials: 'same-origin',
+        });
+        ok = r.ok;
+    } catch (e) {
+        // Network error. Surface in console for now; P5 audit could
+        // surface to the customer with an inline message.
+        console.error('form submit failed', e);
+    }
+
+    if (ok) {
+        // Reload so the page re-renders with the stored values. The
+        // touched-state attributes (data-original) get refreshed
+        // server-side from the new KV state.
+        window.location.reload();
+        return;
+    }
+
+    // Error path — re-enable the submit so the customer can retry.
+    if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.innerText = submitBtn.dataset.savingOriginalText || 'Save';
+    }
 }
 
 // =====================================================================

@@ -636,17 +636,26 @@ body.app-page {
     outline: 2px solid var(--app-primary);
     outline-offset: -1px;
 }
-/* Future-paired styling for P4's `data-valid` attribute. The
-   browser-native `:invalid` styling activates on submit attempt
-   for `pattern`/`min`/`max` mismatches; data-valid lets P4's
-   `input`-event handler paint per-keystroke. */
+/* P4's `data-valid` attribute, set per-keystroke by
+   `forms/touched_state.js` for inputs with a `pattern` (or
+   `required`). Red on invalid is conspicuous — the customer
+   needs to see something's wrong; green on valid is subtle —
+   "you're between the lines, carry on" doesn't deserve the
+   same visual weight. The browser-native `:invalid` styling
+   activates on submit attempt for `pattern`/`min`/`max`
+   mismatches independently; data-valid lets P4 paint earlier.
+
+   Picking border-color on the valid case (vs. a full outline)
+   keeps the green from overpowering the rest of the form when
+   every pattern field is valid by default. */
 .catalog-form input[data-valid="false"],
 .catalog-form textarea[data-valid="false"] {
     outline: 2px solid var(--danger);
+    outline-offset: -1px;
 }
 .catalog-form input[data-valid="true"],
 .catalog-form textarea[data-valid="true"] {
-    outline: 2px solid #157a3a;  /* same green as status-online */
+    border-color: #157a3a;  /* same green as status-online */
 }
 
 /* Radio group: stack vertically so labels stay readable on

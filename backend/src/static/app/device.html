@@ -48,12 +48,12 @@
         </footer>
     </main>
 
-    <!-- Customer-page JS: `/me` fetch, telemetry-tail polling, the
-         Reveal-button decryption flow for encrypted secrets. The
-         settings form is server-rendered (P3), so app.js no longer
-         parses catalogs client-side and js-yaml is gone from the
-         page (CSP win — drops the `cdn.jsdelivr.net` script-src
-         violation that was hiding behind Report-Only). -->
-    <script src="/app/_static/app.js?v=8" defer></script>
+    <!-- Customer-page JS: telemetry-tail polling, Reveal-button
+         decryption, and (P4) the touched-state form module. Loaded
+         as a `<script type="module">` so app.js can `import` from
+         `forms/touched_state.js` without leaking the import chain
+         to global scope. Modules are deferred by default — no
+         `defer` attribute needed. -->
+    <script type="module" src="/app/_static/app.js?v=9"></script>
 </body>
 </html>

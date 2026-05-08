@@ -213,6 +213,113 @@ def test_soft_404_redirects_to_landing(monkeypatch):
 
 # ----- multi-field write order -----
 
+# ----- P4 contract: partial payloads (touched-state JS produces these) -----
+#
+# P4 doesn't change the server handler; it changes what the JS
+# *sends*. Server-side, "partial update" is just "iterate
+# whatever fields arrived" — which the strict-naive handler
+# already does. These tests document the cross-tier contract by
+# simulating the JS's behavior with handcrafted POST bodies, so a
+# future server change that breaks the partial-update model fails
+# loudly here.
+
+
+def test_p4_untouched_write_only_omitted_preserves_kv(client, fake_redis):
+    """The marquee P4 case: untouched `write_only` field is
+    omitted from the POST → prior KV value preserved by absence.
+    JS-side: `serialize()` drops `write_only && !dirty` fields;
+    server-side: absent field = no write."""
+    fake_redis._kv["kv:demo/dev1/wifi_password"] = msgpack.packb("oldsecret")
+    fake_redis._kv["kv:demo/dev1/wifi_password:enc"] = b"1"
+
+    # JS posts only the dirty field (display_mode); wifi_password
+    # is omitted because it was untouched and write_only.
+    client.post("/app/demo/dev1", data={"display_mode": "weather"},
+                follow_redirects=False)
+
+    # display_mode written, wifi_password untouched.
+    assert (msgpack.unpackb(fake_redis._kv["kv:demo/dev1/display_mode"], raw=False)
+            == "weather")
+    assert (msgpack.unpackb(fake_redis._kv["kv:demo/dev1/wifi_password"], raw=False)
+            == "oldsecret")
+    # Encrypted-flag sidecar untouched.
+    assert fake_redis._kv["kv:demo/dev1/wifi_password:enc"] == b"1"
+
+
+def test_p4_touched_write_only_writes_through(client, fake_redis):
+    """When the customer types into a write_only field, the JS
+    sends the new value; server writes it; encrypted flag stays
+    set (it was set before)."""
+    fake_redis._kv["kv:demo/dev1/wifi_password"] = msgpack.packb("oldsecret")
+    fake_redis._kv["kv:demo/dev1/wifi_password:enc"] = b"1"
+
+    client.post("/app/demo/dev1", data={"wifi_password": "newpass"},
+                follow_redirects=False)
+
+    assert (msgpack.unpackb(fake_redis._kv["kv:demo/dev1/wifi_password"], raw=False)
+            == "newpass")
+    assert fake_redis._kv["kv:demo/dev1/wifi_password:enc"] == b"1"
+
+
+def test_p4_off_spec_preserved_via_data_original_resend(client, fake_redis):
+    """Snap-on-edit case from the FR: stored value 129, slider
+    visually clamped at 100, customer doesn't touch slider. JS
+    resends `data-original=129`; server writes 129 (idempotent
+    with what was already there). Result: off-spec value preserved
+    despite the visual clamp.
+
+    Server-side this looks like "POST with field value 129" — same
+    as any in-range submit. The cross-tier correctness depends on
+    the JS sending the original instead of the clamped display
+    value."""
+    fake_redis._kv["kv:demo/dev1/ir_brightness"] = msgpack.packb(129)
+
+    # JS, having seen no interaction, posts data-original=129.
+    client.post("/app/demo/dev1", data={"ir_brightness": "129"},
+                follow_redirects=False)
+
+    assert (msgpack.unpackb(fake_redis._kv["kv:demo/dev1/ir_brightness"], raw=False)
+            == 129)
+
+
+def test_p4_dirty_field_clobbers_off_spec(client, fake_redis):
+    """When the customer DOES touch the slider, the FR explicitly
+    accepts that the off-spec value is replaced. Stored 129 →
+    customer drags slider to 50 → JS posts 50 → KV becomes 50."""
+    fake_redis._kv["kv:demo/dev1/ir_brightness"] = msgpack.packb(129)
+
+    client.post("/app/demo/dev1", data={"ir_brightness": "50"},
+                follow_redirects=False)
+
+    assert (msgpack.unpackb(fake_redis._kv["kv:demo/dev1/ir_brightness"], raw=False)
+            == 50)
+
+
+def test_p4_mixed_form_writes_only_present_fields(client, fake_redis):
+    """Customer changes one field (display_mode), leaves another
+    off-spec (ir_brightness=129) alone, and the write_only field
+    is empty + untouched. JS payload contains `display_mode=foo`
+    + `ir_brightness=129` (data-original); wifi_password is
+    omitted. Server writes the two present fields, leaves
+    wifi_password's KV intact."""
+    fake_redis._kv["kv:demo/dev1/ir_brightness"] = msgpack.packb(129)
+    fake_redis._kv["kv:demo/dev1/wifi_password"] = msgpack.packb("oldsecret")
+    fake_redis._kv["kv:demo/dev1/wifi_password:enc"] = b"1"
+
+    client.post("/app/demo/dev1", data={
+        "display_mode": "weather",
+        "ir_brightness": "129",  # data-original — no change
+    }, follow_redirects=False)
+
+    assert (msgpack.unpackb(fake_redis._kv["kv:demo/dev1/display_mode"], raw=False)
+            == "weather")
+    assert (msgpack.unpackb(fake_redis._kv["kv:demo/dev1/ir_brightness"], raw=False)
+            == 129)
+    # wifi_password untouched.
+    assert (msgpack.unpackb(fake_redis._kv["kv:demo/dev1/wifi_password"], raw=False)
+            == "oldsecret")
+
+
 def test_multiple_fields_all_persisted(client, fake_redis):
     """Multi-field POST writes every key. Order isn't asserted —
     correctness is per-key, not per-iteration. (httpx's TestClient
