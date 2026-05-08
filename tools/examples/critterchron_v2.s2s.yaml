@@ -1,0 +1,147 @@
+# Demo catalog exercising the full P0 schema surface from
+# docs/fr_catalog_app_ui.md. Use for the P0 sign-off walkthrough's
+# "publish a fixture catalog with valid theme: + ui: blocks" step.
+#
+# Two reasons this lives in tools/examples/ rather than docs/handoff/:
+# 1. We want it under a path the CLI can find without a flag during a
+#    local round-trip test (`cd tools/examples && stra2us catalog publish
+#    --catalog critterchron_v2.s2s.yaml`).
+# 2. docs/handoff/critterchron.s2s.yaml is the *reference catalog the
+#    Critterchron team adopted at M2*; mutating it to add P0 keys would
+#    misrepresent what shipped. When the Critterchron team picks up
+#    these features we can fold the new keys back into the handoff
+#    copy.
+
+app: critterchron
+
+# ----- theme: brand colors, font, logo, product name -----
+# Every value is validated by the publish-time lint (hex shape, font
+# allowlist, asset-must-exist, length caps). A logo.svg is expected
+# alongside this file in `_assets/` once P1 ships the asset pipeline;
+# without P1, the logo_asset reference passes the *syntactic* lint
+# but the existence check is skipped (asset_listing not provided).
+
+theme:
+  primary_color: "#5b3fb8"   # buttons, accent borders
+  accent_color:  "#ffb86c"   # highlights, links
+  bg_color:      "#f7f3eb"   # page background
+  text_color:    "#2a2a2a"   # body text
+  font_family:   system-ui   # one of: system-ui, sans-serif, serif, monospace
+  logo_asset:    logo.svg    # served from /app/critterchron/_assets/logo.svg
+  logo_alt:      Critterchron
+  product_name:  Critterchron
+
+# ----- ui: markdown blobs at fixed page positions -----
+# Sanitized server-side at render (P3). Allowlist is restrictive:
+# headings h2-h4, lists, code, links to https only, images that
+# resolve to /app/<app>/_assets/<file>. Size cap is
+# STRA2US_MARKDOWN_MAX_BYTES (4096 by default).
+
+ui:
+  header_markdown: |
+    ## Configure your Critterchron
+
+    Settings sync to your clock within ~30 seconds. See
+    [the docs](https://critterchron.example.com/docs) for help.
+
+  footer_markdown: |
+    Critterchron, Inc. ·
+    [Privacy](https://critterchron.example.com/privacy)
+
+# ----- vars: every UI hint exercised at least once -----
+
+vars:
+
+  # enum (string, simple form). Renders as <select>.
+  display_mode:
+    type: string
+    scope: [app, device]
+    default: clock
+    label: Display mode
+    # NOTE: `off` MUST be quoted. YAML 1.1 parses bare off / on / yes / no
+    # as Python booleans, which the parser rejects with a clear message.
+    enum: [clock, weather, photo, "off"]
+    help: What the display shows when idle
+
+  # enum (string, object form with pretty labels). Renders as <select>
+  # showing the label, submitting the value.
+  startup_animation:
+    type: string
+    scope: [app, device]
+    default: fade
+    label: Startup animation
+    enum:
+      - {value: fade,  label: "Fade in"}
+      - {value: slide, label: "Slide from edge"}
+      - {value: none,  label: "(none)"}
+    help: Plays once per boot
+
+  # int with min/max/step + slider widget. Renders as <input type=range>.
+  ir_brightness:
+    type: int
+    scope: [app, device]
+    default: 50
+    label: IR brightness
+    min: 0
+    max: 100
+    step: 5
+    widget: slider
+    help: 0 = off, 100 = max
+
+  # int with enum (numeric enum). Renders as <select>. Mutually
+  # exclusive with min/max — lint flags the combination.
+  pwm_freq_hz:
+    type: int
+    scope: [app, device]
+    default: 1000
+    label: PWM frequency
+    enum: [500, 1000, 2000, 4000]
+    help: Hz; supported values vary by IR LED driver
+
+  # string with widget=secret + write_only.
+  # Masked input; field renders empty regardless of stored value;
+  # untouched submit omits the field (server treats absence as
+  # "preserve current"). The masking is cosmetic — see the FR's
+  # Part 1 / "widget: secret" caveat.
+  wifi_password:
+    type: string
+    scope: [app, device]
+    default: ""
+    label: Wi-Fi password
+    encrypted: true            # advisory pairing with fr_encrypted_values
+    widget: secret
+    write_only: true
+    max_length: 63             # WPA2 PSK max
+    help: WPA2/WPA3 passphrase
+
+  # string with multiline + max_length. Renders as <textarea>.
+  greeting:
+    type: string
+    scope: [app, device]
+    default: "hi!"
+    label: Greeting message
+    multiline: true
+    max_length: 200
+    help: Shown on power-up. Newlines OK.
+
+  # string with pattern. Renders as <input type=text pattern>;
+  # gets per-keystroke red/green styling via the touched-state JS.
+  start_time:
+    type: string
+    scope: [app, device]
+    default: "07:00"
+    label: Start time
+    pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+    help: 24-hour format
+    help_markdown: |
+      24-hour `HH:MM`. Examples: `07:00`, `13:30`, `23:59`.
+
+  # string with widget=radio + enum. Renders as a radio group.
+  notification_sound:
+    type: string
+    scope: [app, device]
+    default: chime
+    label: Notification sound
+    widget: radio
+    enum: [chime, beep, silent]
+    help: Played when settings sync completes

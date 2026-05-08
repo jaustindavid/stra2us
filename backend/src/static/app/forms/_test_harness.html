@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>touched-state test harness</title>
+<!--
+  Manual / browser harness for touched_state.js (docs/fr_catalog_app_ui_plan.md
+  P0 manual walkthrough step 4: "Open the JS module's test harness page;
+  type into a fixture form; confirm dirty/touched behavior in devtools").
+
+  Reachable at /app/_static/forms/_test_harness.html (the static mount in
+  main.py serves backend/src/static/app/ at /app/_static/). Filename is
+  underscore-prefixed so it sits alongside the production module without
+  being served as if it were a page anyone would land on.
+-->
+<style>
+  body { font: 14px system-ui, sans-serif; padding: 1.5rem; max-width: 50em; }
+  fieldset { margin-bottom: 1rem; }
+  label { display: block; margin: 0.5em 0 0.2em; }
+  input[data-valid="false"], textarea[data-valid="false"] { outline: 2px solid #c44; }
+  input[data-valid="true"],  textarea[data-valid="true"]  { outline: 2px solid #4a4; }
+  pre { background: #f4f4f4; padding: 0.75em; }
+</style>
+</head>
+<body>
+<h1>touched-state.js — manual harness</h1>
+<p>Open devtools and type / interact. The serialized payload (computed by
+<code>serialize(form)</code>) appears below the form whenever you click
+<b>Show payload</b>.</p>
+
+<form id="harness">
+  <fieldset>
+    <legend>plain text (no pattern)</legend>
+    <label>greeting<br>
+      <input type="text" name="greeting" data-original="hi!" value="hi!">
+    </label>
+  </fieldset>
+
+  <fieldset>
+    <legend>pattern (HH:MM)</legend>
+    <label>start_time<br>
+      <input type="text" name="start_time"
+             data-original="07:00" value="07:00"
+             pattern="^([01][0-9]|2[0-3]):[0-5][0-9]$">
+    </label>
+  </fieldset>
+
+  <fieldset>
+    <legend>slider with off-spec original</legend>
+    <label>ir_brightness (catalog max=100, stored=129)<br>
+      <input type="range" name="ir_brightness"
+             min="0" max="100" data-original="129" value="100">
+    </label>
+  </fieldset>
+
+  <fieldset>
+    <legend>write_only (renders empty regardless of stored value)</legend>
+    <label>wifi_password<br>
+      <input type="password" name="wifi_password"
+             data-write-only="true"
+             data-original="secret-from-server" value="">
+    </label>
+  </fieldset>
+
+  <fieldset>
+    <legend>enum (radio)</legend>
+    <label><input type="radio" name="display_mode" value="clock"
+                  data-original="clock" checked> clock</label>
+    <label><input type="radio" name="display_mode" value="weather"
+                  data-original="clock"> weather</label>
+    <label><input type="radio" name="display_mode" value="off"
+                  data-original="clock"> off</label>
+  </fieldset>
+
+  <button type="button" id="show">Show payload</button>
+</form>
+
+<h2>Serialized payload</h2>
+<pre id="out">(click "Show payload")</pre>
+
+<script type="module">
+  import { init, serialize } from "./touched_state.js";
+  const form = document.querySelector("#harness");
+  init(form);
+  document.querySelector("#show").addEventListener("click", () => {
+    const payload = serialize(form);
+    document.querySelector("#out").textContent =
+      JSON.stringify(payload, null, 2);
+  });
+</script>
+</body>
+</html>
