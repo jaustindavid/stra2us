@@ -522,11 +522,14 @@ the route isn't loaded.
 
 ---
 
-## P3 — Renderer dispatch *(in review — drafted 2026-05-08)*
+## P3 — Renderer dispatch *(signed off 2026-05-08)*
 
-**Status:** code complete, 168 tools + 212 backend tests green
-(+112 backend from P2), awaiting staging redeploy + manual
-walkthrough sign-off.
+**Status:** ✅ shipped. 168 tools + 212 backend tests green
+(+112 backend from P2), all four plan walkthrough steps
+verified live on staging (widgets render per FR dispatch table,
+off-spec value shows warning + clamp + raw `data-original`,
+form submit round-trips, forward-compat publish accepts unknown
+widget hint), operator sign-off recorded.
 
 ### Architecture decision (operator-confirmed before coding)
 
@@ -615,6 +618,23 @@ over best-functional.
    forever. P3 surfaces a clear "run `stra2us catalog publish`"
    message so a deploy-without-publish doesn't look broken.
 
+6. **P0 forward-compat bug found + fixed during P3 walkthrough.**
+   P0 declared `widget: Literal["slider", "secret", "radio"] | None`
+   on the catalog `Var` model — but the FR's "Forward
+   compatibility" rule says unknown widget values MUST be
+   accepted at load time and fall through at render. Old servers
+   loading new catalogs that name a future widget would have
+   failed parser validation, breaking the FR's central
+   forward-compat promise. Walkthrough step 4
+   (`widget: holographic_orb`) caught it on the first try.
+   Loosened to `widget: str | None`; renderer dispatch's
+   fall-through path (already implemented + tested) handles
+   the rest. Test `test_unknown_widget_value_accepted_for_forward_compat`
+   replaces the old "rejected" expectation. Server-side parsing
+   was unaffected (the server uses `yaml.safe_load` to a dict,
+   not the pydantic schema), so no server redeploy was needed
+   for the fix — CLI-only.
+
 ### Open question resolutions
 
 | Open Q | Decision | Where |
@@ -624,25 +644,29 @@ over best-functional.
 | Backend imports of `stra2us_cli` | Vendor + parity test for the sanitizer; dict-based input for the catalog model | new files in `backend/src/services/` |
 | Telemetry config flow | Server-rendered `<body data-*>` attrs | `_render_device_page` |
 
-### Sign-off checklist (anticipated; final form awaits walkthrough)
+### Sign-off checklist
 
-| Item | Status |
-|---|:---:|
-| All snapshot tests green | ✅ 212 backend + 168 tools |
-| Off-spec values show warning + verbatim value | ✅ unit + integration |
-| Markdown blocks render correctly with caching | ✅ test_markdown_cache + test_page_renderer |
-| Native browser validation blocks bad submits | ⏳ (HTML5 native; awaits browser walkthrough) |
-| No JS required for any P3 behavior | ✅ form is server-rendered + browser-native submit; app.js handles only telemetry/Reveal |
-| CSP clean | ⏳ (awaits staging — but `cdn.jsdelivr.net` removed; everything else self-hosted) |
+| Item | Status | Notes |
+|---|:---:|---|
+| All snapshot tests green | ✅ | 212 backend + 168 tools |
+| Off-spec values show warning + verbatim value | ✅ | unit + integration; live-verified with `ir_brightness=129` showing warning badge + clamped slider + raw `data-original="129"` |
+| Markdown blocks render correctly with caching | ✅ | test_markdown_cache + test_page_renderer; live-verified header/footer markdown on the customer page |
+| Native browser validation blocks bad submits | ✅ | live-verified `start_time` rejecting `7am` via HTML5 `pattern` |
+| No JS required for any P3 behavior | ✅ | form is server-rendered + browser-native submit; app.js handles only telemetry/Reveal |
+| CSP clean | ✅ | `cdn.jsdelivr.net` removed from device.html; everything else self-hosted; `Content-Security-Policy-Report-Only` header still attached |
 
-### Walkthrough (pending staging redeploy)
+### Manual walkthrough
 
-| Step | Plan | Status |
-|---|---|:---:|
-| 1. Open critterchron page; confirm dispatch table widgets render | Browser; `display_mode`=dropdown, `ir_brightness`=slider, `wifi_password`=masked, `greeting`=textarea, `start_time`=text+pattern; header md above; logo+product name in chrome | ⏳ |
-| 2. Set `ir_brightness=129` via admin raw KV; refresh; confirm slider pinned at 100 + warning badge `129` + raw 129 on data-original | Browser + admin KV editor | ⏳ |
-| 3. Submit the form via browser-native submit; in-range values save; HTML5 blocks out-of-range | Browser | ⏳ |
-| 4. Hand-edit catalog with `widget: future_widget_xyz`; renderer falls back to type default | CLI publish + browser refresh | ⏳ |
+All four plan walkthrough steps verified live on staging on
+2026-05-08, after the redeploy from `origin/catalog-app-ui` +
+the parser fix landed.
+
+| Step | Status | Notes |
+|---|:---:|---|
+| 1. Customer page renders all dispatch-table widgets | ✅ | Operator confirmed: section chrome (logo + "Critterchron"), header markdown, dropdowns, slider, masked password (empty per `write_only`), textarea, pattern-matched text, radio group, footer markdown — all visible. |
+| 2. Off-spec `ir_brightness=129` clamps to 100 + warning badge | ✅ | Slider visually pinned at 100; warning quotes the verbatim `129`; `data-original="129"` carries the raw value for P4. |
+| 3. Browser-native form submit + HTML5 validation | ✅ | `start_time` blocks invalid `7am` per `pattern`; valid `07:30` POSTs and 303-redirects to refreshed page. |
+| 4. Forward compat: `widget: holographic_orb` accepted | ✅ | CLI publish succeeded post-fix; renderer falls through to type-default text input. Original catalog restored after demo. |
 
 ### Items deferred / followups
 
@@ -704,3 +728,24 @@ reverting too. Standard "revert the merge commit" flow applies.
   (`device.html`, `app.js`, `styles.css`, `routes_app.py`,
   `routes_app_theme.py`, `main.py`, `requirements.txt`). Test
   files (7 new `test_*.py` in `backend/tests/`).
+* **Initial deploy crashed on missing service files.** The first
+  redeploy attempt failed with
+  `ModuleNotFoundError: No module named 'services.page_renderer'`
+  because the new `backend/src/services/*.py` files (5 of them)
+  weren't on the branch — same shape as the P0 deploy gotcha,
+  just in a different subdirectory this time. Smoke went 0/10
+  immediately, container logs spelled out the missing module,
+  fix was a re-copy + re-commit. **Pattern carrying forward:**
+  the `git ls-files | grep <path>` sanity check before redeploy
+  catches this in seconds; worth running it as a habit on every
+  multi-file phase.
+* **Walkthrough caught a P0 forward-compat bug that 248 tests
+  missed.** P0's `widget: Literal[...]` validator silently
+  violated the FR's "unknown widgets fall through" promise. The
+  bug only manifests when an old server tries to load a new
+  catalog — a scenario unit tests don't naturally cover because
+  they run with a single code+catalog version. P3's manual step
+  4 (publish a catalog with `widget: holographic_orb`) caught
+  it on first try. Proves the walkthrough's value beyond CI:
+  forward-compat / cross-version contracts only break under
+  live combinations.

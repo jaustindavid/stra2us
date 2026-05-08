@@ -53,11 +53,18 @@ class EnumChoice(BaseModel):
     label: str
 
 
-# Renderer-hint widget vocabulary. Closed set on purpose — see
-# `docs/fr_catalog_app_ui.md` "Renderer dispatch". Unknown values
-# fall through to the type-default at render time, so adding a new
-# widget here is an additive change without breaking older catalogs.
-Widget = Literal["slider", "secret", "radio"]
+# Recognized renderer-hint widget values. Listed for documentation
+# / type-checker hints, but the parser accepts any string — the FR's
+# "Forward compatibility" rule is explicit:
+# > Unknown `widget:` values fall through to the type-default. Old
+# > catalogs render at reduced fidelity on older servers; new
+# > catalogs degrade gracefully on old servers.
+# That promise can only hold if the parser doesn't reject unknown
+# values at load time. The renderer (`widget_renderer.render_widget`
+# in the backend, plus the analogous client-side dispatch) decides
+# what to do with each value at render time. Lint may warn for
+# unknown widgets (P3 doesn't yet), but never fails them.
+KNOWN_WIDGETS: tuple[str, ...] = ("slider", "secret", "radio")
 
 
 class Var(BaseModel):
@@ -84,7 +91,7 @@ class Var(BaseModel):
     min: int | float | None = None
     max: int | float | None = None
     step: int | float | None = None
-    widget: Widget | None = None
+    widget: str | None = None  # any string; renderer dispatch falls through unknowns. See KNOWN_WIDGETS.
     multiline: bool = False
     max_length: int | None = None
     pattern: str | None = None

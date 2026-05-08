@@ -89,7 +89,18 @@ def test_object_form_enum_loads(tmp_path):
     assert items[0].value == "clock" and items[0].label == "Clock face"
 
 
-def test_unknown_widget_value_rejected(tmp_path):
+def test_unknown_widget_value_accepted_for_forward_compat(tmp_path):
+    """Per FR's "Forward compatibility": unknown `widget:` values
+    must NOT fail catalog load — old servers running new catalogs
+    have to keep working. Renderer dispatch falls through to the
+    type-default at render time. Tested in the backend's
+    `test_widget_renderer.py` — a `widget: future_glow_orb` on a
+    string var renders as plain `<input type="text">`.
+
+    Surfaced during P3 staging walkthrough: P0 had this as
+    `widget: Widget | None` (`Literal[...]`), which silently
+    broke the FR's forward-compat promise. Loosened to
+    `widget: str | None`."""
     p = _write(tmp_path, """
         app: testapp
         vars:
@@ -98,8 +109,8 @@ def test_unknown_widget_value_rejected(tmp_path):
             scope: [app]
             widget: future_glow_orb
     """)
-    with pytest.raises(CatalogError, match="widget"):
-        load_catalog(p)
+    cat = load_catalog(p)
+    assert cat.vars["mode"].widget == "future_glow_orb"
 
 
 def test_unknown_top_level_field_rejected(tmp_path):
