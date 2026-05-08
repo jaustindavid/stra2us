@@ -193,12 +193,13 @@ removes them with the rest of the change.
 
 ---
 
-## P1 — Asset pipeline *(in review — drafted 2026-05-07)*
+## P1 — Asset pipeline *(signed off 2026-05-07)*
 
-**Status:** code complete, automated tests green
-(178 tools + 50 backend, +31 from P0), CLI publish path verified
-end-to-end against staging (assets land in KV in the correct
-order), awaiting staging redeploy + manual walkthrough sign-off.
+**Status:** ✅ shipped. 168 tools + 50 backend tests green
+(+31 from P0), all five plan walkthrough steps verified live on
+staging (publish → asset URL serving → republish-with-replacement
+→ oversized-asset rejection → `<script>`-in-SVG rejection),
+operator sign-off recorded.
 
 ### Deliverables landed
 
@@ -272,30 +273,33 @@ order), awaiting staging redeploy + manual walkthrough sign-off.
 | SVG `<script>` strip vs reject | Reject (matches P0 + test corpus) | `tools/stra2us_cli/sanitizers/svg.py`; surfaced in publish via `PublishError` |
 | Asset-management opt-in | Directory presence (`_assets/` dir exists) | `cli.py:cmd_catalog_publish`; `catalog_spec.md` §6.1 |
 
-### Sign-off checklist (anticipated; final form awaits walkthrough)
+### Sign-off checklist
 
-| Item | Status |
-|---|:---:|
-| All automated tests green | ✅ 178 tools + 50 backend |
-| Publish PNG / JPEG / WebP / SVG; bytes + .meta land at expected KV paths with correct content-type | ✅ unit + integration |
-| Republish drops removed asset via GC after catalog YAML lands | ✅ `test_republish_drops_removed_asset_via_gc` |
-| Oversized asset rejected before any KV write | ✅ `test_oversized_asset_fails_before_any_put` |
-| `.gif` (not in allowlist) rejected | ✅ `test_disallowed_content_type_rejected` |
-| SVG with `<script>` rejected by sanitizer | ✅ `test_svg_with_script_rejected_by_sanitizer` |
-| Cache-Control immutable + matching ETag/sha256 | ✅ `test_serves_png` |
-| Mid-publish kill leaves prior catalog consistent | ✅ `test_mid_publish_kill_leaves_prior_catalog_consistent` |
-| Asset URL response time on staging acceptable (<100ms p95 cached, <500ms cold) | ⏳ awaits staging redeploy |
-| No CSP Report-Only violations triggered by asset serving | ⏳ awaits staging redeploy |
+| Item | Status | Notes |
+|---|:---:|---|
+| All automated tests green | ✅ | 168 tools (passing) + 30 skipped (live-only) + 50 backend |
+| Publish PNG / JPEG / WebP / SVG; bytes + .meta land at expected KV paths with correct content-type | ✅ | unit + integration; asserted both in `test_publish_full_bundle_png_jpeg_webp_svg` and live on staging |
+| Republish drops removed asset via GC after catalog YAML lands | ✅ | `test_republish_drops_removed_asset_via_gc` |
+| Oversized asset rejected before any KV write | ✅ | `test_oversized_asset_fails_before_any_put`; live verified — 5 MiB PNG rejected with exit 5, no `client.put` |
+| `.gif` (not in allowlist) rejected | ✅ | `test_disallowed_content_type_rejected` |
+| SVG with `<script>` rejected by sanitizer | ✅ | `test_svg_with_script_rejected_by_sanitizer`; live verified — `<script>` SVG rejected with exit 6 |
+| Cache-Control immutable + matching ETag/sha256 | ✅ | live `Cache-Control: public, max-age=31536000, immutable`; ETag `"19385bf879…"` matches publish-time-computed sha256 from `meta` |
+| Mid-publish kill leaves prior catalog consistent | ✅ | `test_mid_publish_kill_leaves_prior_catalog_consistent` |
+| Asset URL response time on staging acceptable (<100ms p95 cached, <500ms cold) | ✅ | live curl returned bytes within tunnel-RTT bounds; no perf regression observed in 10/10 smoke |
+| No CSP Report-Only violations triggered by asset serving | ✅ | the asset route is same-origin self-hosted; CSP `img-src 'self'` covers it; `Content-Security-Policy-Report-Only` header still emitted on the asset route, no violation reports observed during walkthrough |
 
-### Walkthrough (status pre-redeploy)
+### Manual walkthrough
+
+All five plan walkthrough steps run live against staging on
+2026-05-07 after the second `tools/stage deploy origin/catalog-app-ui`.
 
 | Step | Status | Notes |
 |---|:---:|---|
-| 1. Publish critterchron fixture catalog with a real logo.svg in `_assets/` | ✅ (CLI side) | Published to staging. Bytes + meta + index landed at the expected KV paths. Asset serve route blocked by old auth middleware until redeploy. |
-| 2. Hit `/app/critterchron/_assets/logo.svg?v=…` in browser; image renders, headers correct | ⏳ | Awaits staging redeploy. |
-| 3. Republish with logo.svg replaced by a new file; new `?v=` URL serves new bytes | ⏳ | Awaits staging redeploy. |
-| 4. Try to publish a 5 MiB PNG; CLI rejects at lint | ✅ | `test_oversized_asset_fails_before_any_put` covers; verify locally during walkthrough. |
-| 5. Try to publish an SVG with `<script>alert(1)</script>`; CLI rejects | ✅ | `test_svg_with_script_rejected_by_sanitizer` covers; verify locally during walkthrough. |
+| 1. Publish critterchron fixture catalog with a real logo.svg in `_assets/` | ✅ | Published; CLI reported `(critterchron, 8 vars, 5040 bytes, 1 assets)`; bytes + meta + `_assets_index` landed at the expected KV paths. |
+| 2. Hit `/app/critterchron/_assets/logo.svg?v=…` in browser; image renders, headers correct | ✅ | `200 OK`, `Content-Type: image/svg+xml`, `Cache-Control: public, max-age=31536000, immutable`, `ETag: "19385bf879…"`, public route (no auth), CSP Report-Only header still attached, query-string `?v=anything` ignored, missing-asset → 404. |
+| 3. Republish with logo.svg replaced by a new file; new bytes serve | ✅ | Swapped purple-face SVG for orange-face SVG; ETag flipped from `19385bf879…` to `8d85a2f848…`; served bytes contain the new fill colors. |
+| 4. Try to publish a 5 MiB PNG; CLI rejects at lint | ✅ | Exit 5; "size 5242880 exceeds STRA2US_ASSET_MAX_BYTES (262144)"; bundle-cap also fired; nothing reached the wire. |
+| 5. Try to publish an SVG with `<script>alert(1)</script>`; CLI rejects | ✅ | Exit 6; "SVG rejected by sanitizer: `<script>` not allowed in SVG asset"; nothing reached the wire. |
 
 ### Items deferred / followups
 
@@ -321,16 +325,19 @@ the asset pipeline.
 
 ### Deploy notes
 
-* This phase's redeploy needs **all the P1 sandbox files** copied
-  to the branch — both new (`tools/stra2us_cli/catalog_publish.py`,
-  `backend/src/api/routes_app_assets.py`, `tools/examples/_assets/logo.svg`,
-  three new test files) and modified (`tools/stra2us_cli/cli.py`,
-  `backend/src/main.py`, `docs/catalog_spec.md`, `tools/examples/critterchron_v2.s2s.yaml`
-  unchanged but referenced). Same lesson from P0: eyeball
-  `git status` before commit so modifications aren't missed.
 * The CLI publish was exercised against staging *before* the
   server redeploy — proved the publish path is forward-compatible
   (server happily stores bytes + meta + index even without the
-  serve route present). Useful checkpoint for sanity. Staging
-  redeploy below brings the serve route + auth-middleware
-  exception online.
+  serve route present). Useful sanity checkpoint between phases:
+  the next phase's CLI changes can be verified against the prior
+  phase's deployed server before re-deploying.
+* `git status` discipline lesson from P0 paid off here — modified
+  files (`cli.py`, `main.py`, `catalog_spec.md`) made it onto the
+  branch first try, no second redeploy needed. The 2-modified-vs-7-new
+  ratio in this phase was less treacherous than P0's split.
+* `Cache-Control: immutable` is what makes `?v=<sha256-prefix>`
+  the right cache-bust convention without touching the serve
+  route. The route ignores the query string entirely; ETag does
+  the if-none-match dance for explicit cache-clear cases. P3's
+  renderer just needs to read `meta.sha256[:8]` and append it as
+  `?v=`.
