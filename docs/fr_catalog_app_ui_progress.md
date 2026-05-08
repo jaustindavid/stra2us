@@ -344,11 +344,13 @@ the asset pipeline.
 
 ---
 
-## P2 — Theme stylesheet *(in review — drafted 2026-05-08)*
+## P2 — Theme stylesheet *(signed off 2026-05-08)*
 
-**Status:** code complete, 168 tools + 100 backend tests green
-(+50 backend from P1), awaiting staging redeploy + manual
-walkthrough sign-off.
+**Status:** ✅ shipped. 168 tools + 100 backend tests green
+(+50 backend from P1), all five plan walkthrough steps verified
+live on staging (republish-with-color-swap → ETag flips → refresh
+shows new colors → original theme restored), operator confirmed
+visuals match expectation, sign-off recorded.
 
 ### Deliverables landed
 
@@ -440,25 +442,28 @@ defense holds even when a malformed value reaches KV directly
 | Empty-theme rendering | Empty-body rule (`[data-app="x"] {\n}\n`) — page falls back to `:root` defaults | `theme_serializer` + `routes_app_theme` |
 | Catalog-not-published rendering | 404 from theme route + browser inline-default fallback; `<link>` still emitted from page wrapper | `routes_app_theme.serve_theme` + `_render_device_page` |
 
-### Sign-off checklist (anticipated; final form awaits walkthrough)
+### Sign-off checklist
 
-| Item | Status |
-|---|:---:|
-| All automated tests green (incl. adversarial) | ✅ 168 tools + 100 backend |
-| Theme applies to vendor section only | ✅ `[data-app="…"]` selector — admin chrome on separate page tree |
-| Default fallbacks kick in for missing keys | ✅ `var(--app-x, <default>)` in styles.css; tested via `test_partial_theme_emits_only_set_keys` |
-| No CSP violations | ⏳ awaits staging redeploy — same-origin `<link>`, no inline `<style>`, fits under `style-src 'self'` by construction |
-| Walkthrough 1–5 behave as described | ⏳ awaits staging redeploy |
+| Item | Status | Notes |
+|---|:---:|---|
+| All automated tests green (incl. adversarial) | ✅ | 168 tools + 100 backend; 13-entry adversarial color corpus + 4-entry adversarial font corpus |
+| Theme applies to vendor section only | ✅ | live: `/app/critterchron/<device>` shows purple/cream/orange palette; `/admin/*` retains stra2us-default blue |
+| Default fallbacks kick in for missing keys | ✅ | `var(--app-x, <default>)` in styles.css; tested via `test_partial_theme_emits_only_set_keys`; verified live (theme-less catalogs render with `:root` defaults) |
+| No CSP violations | ✅ | live: `style-src 'self'` covers the per-app `<link rel="stylesheet">`; no inline `<style>` anywhere; `Content-Security-Policy-Report-Only` header attached to both base + theme stylesheet responses |
+| Walkthrough 1–5 behave as described | ✅ | curl + browser verification complete — see "Manual walkthrough" below |
 
-### Walkthrough (pending staging redeploy)
+### Manual walkthrough
 
-| Step | Plan | Status |
-|---|---|:---:|
-| 1. Publish critterchron's theme with brand colors and logo | Re-publish `tools/examples/critterchron_v2.s2s.yaml` (already has theme block) — bytes unchanged, theme hash drives the cache-bust | ⏳ |
-| 2. Open customer page; confirm vendor section background/primary/accent match catalog; `product_name`/`logo` appear in chrome (basic placement); admin chrome NOT themed | Browser-side; will need a test admin to log in and visit `/app/critterchron/<device>` | ⏳ |
-| 3. View page source; confirm `<link rel="stylesheet" href="/app/critterchron/_theme.css?v=…">` present | curl-able once auth bypass available, otherwise browser dev tools | ⏳ |
-| 4. Network tab: `_theme.css` loads with correct cache headers | Browser dev tools | ⏳ |
-| 5. Republish theme with different colors; cache-bust URL changes; refresh shows new colors | Edit theme block in YAML, republish, observe new ETag/`?v=` and new colors | ⏳ |
+All five plan walkthrough steps verified live on staging on
+2026-05-08, post-redeploy from `origin/catalog-app-ui`.
+
+| Step | Status | Notes |
+|---|:---:|---|
+| 1. Publish critterchron's theme with brand colors and logo | ✅ | `tools/examples/critterchron_v2.s2s.yaml` (8 vars, 5040 bytes, 1 asset) republished cleanly. |
+| 2. Open customer page; vendor section themed; admin chrome NOT themed | ✅ | Browser-verified by operator: page bg cream (`#f7f3eb`), buttons purple (`#5b3fb8`), inline edit-link orange (`#ffb86c`), body text dark (`#2a2a2a`); `/admin/*` retained default blue. |
+| 3. View page source; `<link rel="stylesheet" href="/app/critterchron/_theme.css?v=…">` present | ✅ | Confirmed in DOM with `data-app="critterchron"` on `<body>`. |
+| 4. Network tab: `_theme.css` loads with correct cache headers | ✅ | curl: `Content-Type: text/css; charset=utf-8`, `Cache-Control: public, max-age=31536000, immutable`, `ETag: "e251e8dc"`. |
+| 5. Republish with different colors; cache-bust URL changes; refresh shows new colors | ✅ | Swapped to green primary / orange-red accent / light bg via sed-then-publish; ETag flipped from `e251e8dc` to `920c552d`; served body shows the new colors; restored to original after the demo. |
 
 ### Items deferred / followups
 
@@ -492,14 +497,25 @@ the route isn't loaded.
 
 ### Deploy notes
 
-* New backend dep (`pyyaml`) — the redeploy needs to rebuild
-  the image (which `tools/stage deploy` does via
-  `docker compose up --build`). Same-shape lesson from P1: the
-  layered docker cache rebuilds the requirements step, which
-  is the only step that's slow.
+* New backend dep (`pyyaml`) — the redeploy rebuilt the image
+  via `docker compose up --build`; the requirements layer was
+  the only slow step, the rest cached. 10/10 smoke tests passed
+  on first deploy (no missed-modifications repeat of P0).
 * Two new files in `backend/` (`services/theme_serializer.py`,
   `api/routes_app_theme.py`) plus the new `services/`
   directory's `__init__.py`. Modified files: `main.py`,
   `requirements.txt`, `routes_app.py`, `static/app/device.html`,
   `static/app/styles.css`. Tests: 3 new files in
   `backend/tests/`.
+* The catalog YAML at `_catalog/critterchron` round-trips
+  through the new server-side parse path with no compatibility
+  issues — confirms the P1-published catalog's bytes are
+  reachable as both raw text (the existing `catalog fetch`
+  path) and parsed Python objects (the new theme path) without
+  a migration step. Useful proof that future server-side
+  catalog work (P3 renderer dispatch will read `vars:` similarly)
+  can layer on without touching publish.
+* Color-swap demo + restoration was a useful pattern from P1
+  worth carrying — the demonstration mutates a state on
+  staging, captures the before/after, then restores so the
+  customer-facing demo URL matches the documented baseline.
