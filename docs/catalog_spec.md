@@ -326,6 +326,44 @@ This section is **draft for M2**; the M1 CLI does not yet implement
 publish. It is documented here so the schema author knows what the
 server will receive.
 
+> **Update (2026-05-07, P1 of [`fr_catalog_app_ui.md`](fr_catalog_app_ui.md)).**
+> The catalog YAML's location at `_catalog/{app}` is unchanged —
+> fetches and historical publishes keep working. P1 adds *sibling*
+> keys for the asset bundle, all under the same reserved `_catalog/`
+> namespace:
+>
+> ```
+> _catalog/{app}                              # catalog YAML (unchanged)
+> _catalog/{app}/_assets/{filename}           # asset bytes (P1)
+> _catalog/{app}/_assets/{filename}.meta      # {content_type, sha256, size}
+> _catalog/{app}/_assets_index                # list of currently-published filenames
+> ```
+>
+> Same ACL pattern (the existing `_catalog/{app}[/...]` rule
+> covers all of them). Same publish credential. The `_assets_index`
+> sidecar is what lets the CLI diff old vs new bundle on republish
+> and GC dropped files. See
+> [`fr_catalog_app_ui.md`](fr_catalog_app_ui.md) "Assets" and
+> "Implementation outline" §5a for the full rationale + atomicity
+> story.
+>
+> The server-side serve route — `GET /app/{app}/_assets/{filename}`,
+> public, year-immutable cache headers — lives in
+> [`backend/src/api/routes_app_assets.py`](../backend/src/api/routes_app_assets.py).
+> Asset URLs the renderer emits include a cache-bust query
+> parameter (`?v=<sha256-prefix>`); the route ignores the query
+> and serves the bytes that match the path.
+>
+> **Asset-management opt-in.** `stra2us catalog publish` treats the
+> *presence* of an `_assets/` directory next to the catalog YAML
+> as the signal "this publish manages the asset bundle." A publish
+> from a working tree without `_assets/` takes the pre-P1 path
+> (just the catalog YAML; prior asset bundle untouched). This
+> avoids the footgun where republishing a catalog from a different
+> checkout would silently GC every published asset. To clear all
+> assets, create an empty `_assets/` directory and republish — the
+> empty bundle is the explicit signal.
+
 ### 6.1 Transport — reuse the existing `/kv/` surface
 
 The catalog is published as an ordinary KV value at a reserved key:

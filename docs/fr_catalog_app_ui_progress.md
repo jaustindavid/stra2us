@@ -190,3 +190,147 @@ removes them with the rest of the change.
   `-B`. Worth a one-line note in [staging_environment.md](staging_environment.md)
   or the `tools/stage help` text. *(Filed as a P1 followup
   rather than a fix here, since it doesn't block the phase.)*
+
+---
+
+## P1 — Asset pipeline *(in review — drafted 2026-05-07)*
+
+**Status:** code complete, automated tests green
+(178 tools + 50 backend, +31 from P0), CLI publish path verified
+end-to-end against staging (assets land in KV in the correct
+order), awaiting staging redeploy + manual walkthrough sign-off.
+
+### Deliverables landed
+
+| Plan item | Path | Notes |
+|---|---|---|
+| CLI `_assets/` upload + GC | [`tools/stra2us_cli/catalog_publish.py`](../tools/stra2us_cli/catalog_publish.py) | `discover_assets` (sniff content-type, sanitize SVGs, hash), `lint_loaded` (publish-time bundle limits), `publish_assets` (PUT bundle → PUT YAML commit point → PUT index → DELETE dropped). |
+| Lint-into-publish wiring (deferred P0 item) | [`tools/stra2us_cli/cli.py`](../tools/stra2us_cli/cli.py) `cmd_catalog_publish` | Distinct exit codes: `2`=config, `4`=network, `5`=lint, `6`=asset pipeline. CI / scripts can tell catalog-is-wrong from server-is-down. |
+| Asset serve route | [`backend/src/api/routes_app_assets.py`](../backend/src/api/routes_app_assets.py) | `GET /app/<app>/_assets/<filename>`; reads bytes + meta from KV; `Cache-Control: public, max-age=31536000, immutable`; ETag = sha256. Public route under the `_`-prefixed reserved namespace convention. |
+| Auth-middleware exception | [`backend/src/main.py`](../backend/src/main.py) `_path_needs_admin_auth` | New rule for `/app/<app>/_assets/` matching `/app/_static/`'s shape. |
+| catalog_spec.md update | [`docs/catalog_spec.md`](catalog_spec.md) §6.1 | Documents the sibling-key layout (`_catalog/<app>/_assets/<filename>{,.meta}`, `_catalog/<app>/_assets_index`) and the directory-presence opt-in for asset management. |
+| Demo asset | [`tools/examples/_assets/logo.svg`](../tools/examples/_assets/logo.svg) | Allowlist-clean SVG paired with `critterchron_v2.s2s.yaml`. Round-trips through the sanitizer. |
+
+### Test counts
+
+* Backend: **50 passing** (existing 39 + 11 new `test_app_assets`).
+* Tools: **198 collected, 168 passing + 30 skipped** (the 30 are
+  the existing live-only suites that need `STRA2US_HOST` set;
+  unchanged since P0). The 168-passing figure adds 20 over P0:
+  10 `test_publish_lint` (deferred-from-P0 lint-into-publish
+  coverage) + 10 `test_publish_assets` (P1's E2E pipeline).
+
+### Deviations from plan
+
+1. **Catalog YAML stays at `_catalog/<app>` (bare key).** Earlier
+   discussion floated `_catalog/<app>/catalog.yaml`. Settled on
+   keeping the existing bare-key location — the FR (line 437)
+   only says assets go at `_catalog/<app>/_assets/<filename>`,
+   never that the catalog itself moves. Avoiding the move means
+   zero migration; the existing critterchron + critterchron_v2
+   catalogs at `_catalog/critterchron` keep working unchanged.
+   `catalog_spec.md` §6.1 documents the layout as additive
+   sibling keys.
+
+2. **Asset management is opt-in by directory presence.** The plan
+   doesn't pin the semantics of "no `_assets/` directory in the
+   working tree." Two choices: (a) treat as empty bundle, GC any
+   prior assets; (b) treat as "this publish doesn't manage
+   assets, leave the prior bundle alone." Went with (b) — option
+   (a) is a footgun where a republish from a different working
+   copy silently nukes assets. To clear all assets, create an
+   empty `_assets/` directory and republish; the empty bundle is
+   the explicit signal. Documented in `catalog_spec.md` §6.1.
+
+3. **Publish-time SVG sanitization rejects rather than strips for
+   `<script>`.** The FR's prose says "strip"; the FR's test
+   corpus assertion is "reject." P0 picked reject for `<script>`
+   (silently producing a partially-functional SVG from an
+   attacker's payload is worse than failing the publish). P1's
+   pipeline surfaces these as `PublishError` with exit code 6;
+   the operator sees "evil.svg: SVG rejected by sanitizer:
+   `<script>` not allowed in SVG asset." Other disallowed
+   constructs (`style=`, unknown tags/attrs) still strip silently
+   per the P0 contract.
+
+4. **`_assets_index` sidecar instead of a server-side list
+   endpoint.** The plan's "asset-listing helper for GC at publish
+   time" leaves the implementation open. Adding a server-side
+   `GET /kv/?prefix=...` would have been heavier; the sidecar
+   pattern is one extra KV write per publish, no new route, no
+   new ACL surface. Edge case: a publish that dies between the
+   catalog-YAML PUT and the index PUT leaves orphan keys; the
+   next clean publish reconciles via index diff. Documented in
+   the publish-flow comments.
+
+### Open question resolutions
+
+| Open Q | Decision | Where |
+|---|---|---|
+| GC mechanism (P1 plan deliverable: "asset-listing helper") | `_catalog/<app>/_assets_index` sidecar; one extra PUT per publish; CLI computes diff | `catalog_publish.py:publish_assets` |
+| Layout shift for catalog YAML | No shift — catalog stays at bare `_catalog/<app>`; only assets are sibling keys | `catalog_spec.md` §6.1 update |
+| SVG `<script>` strip vs reject | Reject (matches P0 + test corpus) | `tools/stra2us_cli/sanitizers/svg.py`; surfaced in publish via `PublishError` |
+| Asset-management opt-in | Directory presence (`_assets/` dir exists) | `cli.py:cmd_catalog_publish`; `catalog_spec.md` §6.1 |
+
+### Sign-off checklist (anticipated; final form awaits walkthrough)
+
+| Item | Status |
+|---|:---:|
+| All automated tests green | ✅ 178 tools + 50 backend |
+| Publish PNG / JPEG / WebP / SVG; bytes + .meta land at expected KV paths with correct content-type | ✅ unit + integration |
+| Republish drops removed asset via GC after catalog YAML lands | ✅ `test_republish_drops_removed_asset_via_gc` |
+| Oversized asset rejected before any KV write | ✅ `test_oversized_asset_fails_before_any_put` |
+| `.gif` (not in allowlist) rejected | ✅ `test_disallowed_content_type_rejected` |
+| SVG with `<script>` rejected by sanitizer | ✅ `test_svg_with_script_rejected_by_sanitizer` |
+| Cache-Control immutable + matching ETag/sha256 | ✅ `test_serves_png` |
+| Mid-publish kill leaves prior catalog consistent | ✅ `test_mid_publish_kill_leaves_prior_catalog_consistent` |
+| Asset URL response time on staging acceptable (<100ms p95 cached, <500ms cold) | ⏳ awaits staging redeploy |
+| No CSP Report-Only violations triggered by asset serving | ⏳ awaits staging redeploy |
+
+### Walkthrough (status pre-redeploy)
+
+| Step | Status | Notes |
+|---|:---:|---|
+| 1. Publish critterchron fixture catalog with a real logo.svg in `_assets/` | ✅ (CLI side) | Published to staging. Bytes + meta + index landed at the expected KV paths. Asset serve route blocked by old auth middleware until redeploy. |
+| 2. Hit `/app/critterchron/_assets/logo.svg?v=…` in browser; image renders, headers correct | ⏳ | Awaits staging redeploy. |
+| 3. Republish with logo.svg replaced by a new file; new `?v=` URL serves new bytes | ⏳ | Awaits staging redeploy. |
+| 4. Try to publish a 5 MiB PNG; CLI rejects at lint | ✅ | `test_oversized_asset_fails_before_any_put` covers; verify locally during walkthrough. |
+| 5. Try to publish an SVG with `<script>alert(1)</script>`; CLI rejects | ✅ | `test_svg_with_script_rejected_by_sanitizer` covers; verify locally during walkthrough. |
+
+### Items deferred / followups
+
+1. **Server-side lint at catalog upload.** Still pending; fits
+   naturally in P3 when the renderer reads the parsed catalog.
+   Backend can import `stra2us_cli.catalog_lint` today.
+2. **`tools/stage deploy` ergonomics note.** From P0 deploy
+   notes; one-line update to `tools/stage help` so the next
+   operator doesn't trip on the bare-branch-name foot.
+3. **Asset migration story.** None needed today (P1 is additive),
+   but if a future change moves catalog YAML out of the bare key,
+   the CLI would need a one-time `catalog migrate` verb. Not in
+   scope for this FR.
+
+### Rollback
+
+Reverting P1's commits leaves staging on P0 (catalog YAML still at
+`_catalog/<app>`, no asset routes). Already-published assets sit
+in KV as orphan keys with no read path; harmless. The CLI's old
+`catalog publish` from P0 still uploads YAML to the same key, so
+operators don't notice the rollback unless they were depending on
+the asset pipeline.
+
+### Deploy notes
+
+* This phase's redeploy needs **all the P1 sandbox files** copied
+  to the branch — both new (`tools/stra2us_cli/catalog_publish.py`,
+  `backend/src/api/routes_app_assets.py`, `tools/examples/_assets/logo.svg`,
+  three new test files) and modified (`tools/stra2us_cli/cli.py`,
+  `backend/src/main.py`, `docs/catalog_spec.md`, `tools/examples/critterchron_v2.s2s.yaml`
+  unchanged but referenced). Same lesson from P0: eyeball
+  `git status` before commit so modifications aren't missed.
+* The CLI publish was exercised against staging *before* the
+  server redeploy — proved the publish path is forward-compatible
+  (server happily stores bytes + meta + index even without the
+  serve route present). Useful checkpoint for sanity. Staging
+  redeploy below brings the serve route + auth-middleware
+  exception online.

@@ -32,6 +32,13 @@ import sys
 from pathlib import Path
 
 from .catalog import Catalog, CatalogError, Var, coerce_value, kv_path, load_catalog
+from .catalog_lint import errors as lint_errors, format_issues, lint_catalog, warnings as lint_warnings
+from .catalog_publish import (
+    PublishError,
+    discover_assets,
+    lint_loaded,
+    publish_assets,
+)
 from .client import Stra2usClient, Stra2usError
 from .config import ConfigError, resolve
 
@@ -133,10 +140,62 @@ def cmd_catalog_list(args: argparse.Namespace) -> int:
 
 
 def cmd_catalog_publish(args: argparse.Namespace) -> int:
-    """Validate the local catalog, then upload its raw YAML text to
-    _catalog/{app} via the existing KV endpoint. See docs/catalog_spec.md §6."""
+    """Validate the local catalog, run lint, sanitize and upload any
+    sibling `_assets/`, then commit the catalog YAML — in the order
+    the FR specifies (assets first, catalog YAML as the commit point,
+    `_assets_index` updated, dropped files GC'd last). See
+    `docs/fr_catalog_app_ui.md` "Implementation outline" §5a +
+    `docs/fr_catalog_app_ui_plan.md` P1.
+
+    Validation passes (in order; each is a publish-blocking gate):
+      1. `load_catalog` — strict pydantic schema.
+      2. `discover_assets` — walks `_assets/`; SVGs go through the P0
+         sanitizer; rejected SVGs raise `PublishError`.
+      3. `lint_catalog` + `lint_asset_bundle` — semantic + UI-hint
+         constraints from the FR's lint table, plus per-bundle
+         size/type/filename limits.
+
+    Exit codes:
+      0  — published.
+      2  — config error (missing creds).
+      4  — network / signing error from the server.
+      5  — catalog lint failure (your YAML is wrong).
+      6  — asset-pipeline failure (bad SVG, bundle limit, etc.).
+    """
     path = _catalog_path(args)
-    cat = load_catalog(path)  # validates; raises CatalogError on malformed
+    cat = load_catalog(path)
+
+    # --- assets pass ---
+    # Sanitize + hash *before* lint so the size-after-sanitize is what
+    # the bundle-size cap evaluates. A vendor's pre-sanitize SVG might
+    # exceed the cap; the cleaned tree is what hits KV, so the cleaned
+    # size is the relevant figure.
+    asset_dir = path.parent / "_assets"
+    try:
+        loaded = discover_assets(asset_dir) if asset_dir.is_dir() else []
+    except PublishError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 6
+
+    # `asset_listing=None` would tell lint "no asset context" and skip
+    # the existence check on `theme.logo_asset`. We have an authoritative
+    # listing from the loaded bundle (post-discovery, post-skip-of-
+    # subdirs), so pass it explicitly — even when empty.
+    asset_listing = {a.filename for a in loaded} if asset_dir.is_dir() else None
+
+    # --- lint passes (catalog + bundle) ---
+    issues = lint_catalog(cat, asset_listing=asset_listing)
+    issues.extend(lint_loaded(loaded))
+    errs = lint_errors(issues)
+    warns = lint_warnings(issues)
+    for w in warns:
+        print(f"warning: {w.path}: {w.message}", file=sys.stderr)
+    if errs:
+        print("error: catalog lint failed:", file=sys.stderr)
+        for e in errs:
+            print(f"  {e.path}: {e.message}", file=sys.stderr)
+        return 5
+
     yaml_text = path.read_text()
 
     try:
@@ -145,18 +204,40 @@ def cmd_catalog_publish(args: argparse.Namespace) -> int:
         print(f"error: {e}", file=sys.stderr)
         return 2
 
-    stash_key = _stash_key(cat.app)
+    # Directory presence is the opt-in for asset management. A
+    # catalog without an `_assets/` directory falls back to the
+    # pre-P1 publish path (just the catalog YAML) — does NOT touch
+    # whatever asset bundle the previous publish stashed. Users
+    # who want to clear assets create an empty `_assets/` directory
+    # and republish; that's the explicit signal.
     try:
-        client.put(stash_key, yaml_text)
+        if asset_dir.is_dir():
+            result = publish_assets(client, cat.app, loaded, yaml_text)
+        else:
+            client.put(f"_catalog/{cat.app}", yaml_text)
+            result = {"assets_uploaded": 0, "assets_dropped": 0,
+                      "dropped_filenames": [],
+                      "assets_unmanaged": True}
+    except PublishError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 6
     except Stra2usError as e:
         print(f"error: {e}", file=sys.stderr)
         return 4
 
     size = len(yaml_text.encode("utf-8"))
-    print(
-        f"published: {client.base_url}/kv/{stash_key} "
-        f"({cat.app}, {len(cat.vars)} vars, {size} bytes)"
+    msg = (
+        f"published: {client.base_url}/kv/_catalog/{cat.app} "
+        f"({cat.app}, {len(cat.vars)} vars, {size} bytes"
     )
+    if result["assets_uploaded"]:
+        msg += f", {result['assets_uploaded']} assets"
+    if result["assets_dropped"]:
+        msg += f", GC'd {result['assets_dropped']} dropped"
+    if result.get("assets_unmanaged"):
+        msg += ", assets unmanaged"
+    msg += ")"
+    print(msg)
     return 0
 
 

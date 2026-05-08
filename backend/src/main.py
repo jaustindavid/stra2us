@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from api.routes_device import router as device_router
 from api.routes_admin import router as admin_router
 from api.routes_app import router as app_router
+from api.routes_app_assets import router as app_assets_router
 from api.routes_oauth import router as oauth_router
 from middleware.csp import CSPMiddleware, router as csp_router
 from core import oauth as oauth_config
@@ -74,6 +75,12 @@ def _path_needs_admin_auth(path: str) -> bool:
     if path.startswith("/app/_static/"):
         return False  # public static assets — reuses the `_`-prefixed
                       # reserved-namespace convention from `_catalog/`
+    if "/_assets/" in path and path.startswith("/app/"):
+        return False  # per-app vendor asset bundle — public-by-design
+                      # (the customer page references these in <img>
+                      # tags). Same `_`-prefixed reserved-namespace
+                      # convention as `/app/_static/`. See
+                      # backend/src/api/routes_app_assets.py.
     if path.startswith("/api/app/"):
         return False  # public lookup endpoints
     if path == "/api/_csp_report":
@@ -322,6 +329,13 @@ app.mount("/admin", StaticFiles(directory=os.path.join(BASE_DIR, "static"), html
 # (`/app/`, `/app/{app}/{device}`) catch everything else under /app/.
 APP_STATIC_DIR = os.path.join(BASE_DIR, "static", "app")
 app.mount("/app/_static", StaticFiles(directory=APP_STATIC_DIR), name="app-static")
+# Per-app catalog asset serving (P1 of fr_catalog_app_ui_plan.md).
+# Mount BEFORE app_router so the more specific
+# `/app/{app}/_assets/{filename}` route resolves before
+# `/app/{app}/{device}` (which would otherwise capture
+# `_assets` as a device name).
+app.include_router(app_assets_router, tags=["app-assets"])
+
 # No prefix on the router — routes_app declares its own (`/app/...` and
 # `/api/app/...`) so the route handlers' paths read naturally and
 # the auth middleware's path-matching logic stays in one place.
