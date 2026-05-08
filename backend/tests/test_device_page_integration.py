@@ -228,6 +228,22 @@ def test_catalog_telemetry_topic_substituted(fake_redis):
 
 # ----- only labelled vars surface to customer -----
 
+def test_response_carries_cache_control_no_store(fake_redis):
+    """`window.location.reload()` after the JS form submit
+    (P4) must always re-render against fresh KV. Without
+    `Cache-Control: no-store` browsers may serve the prior
+    render — which hides the state change the customer just
+    made and masks whether touched-state serialize behaved
+    correctly. Caught during P4 staging walkthrough; this
+    regression test stops it returning."""
+    fake_redis.stash_catalog("demo", {
+        "app": "demo",
+        "vars": {"x": {"type": "int", "scope": ["app"], "label": "X"}},
+    })
+    response = _run(routes_app._render_device_page("demo", "dev1"))
+    assert response.headers.get("cache-control") == "no-store"
+
+
 def test_unlabelled_vars_omitted(fake_redis):
     fake_redis.stash_catalog("demo", {
         "app": "demo",

@@ -101,7 +101,19 @@ async def _render_device_page(app: str, device: str) -> HTMLResponse:
         .replace("{{TELEMETRY_TOPIC}}", telemetry_topic)
         .replace("{{HEARTBEAT_SECONDS}}", str(heartbeat_seconds))
     )
-    return HTMLResponse(content=rendered)
+    # `Cache-Control: no-store` so a `window.location.reload()` after
+    # form save always re-renders against fresh KV. Without this,
+    # browsers may serve the previous render (before the save), which
+    # hides the very state change the customer just made — and worse,
+    # masks whether P4's touched-state serialize behaved correctly
+    # (the post-save page would look pre-save). Caught during P4
+    # walkthrough on staging. The CSS / theme.css / asset routes
+    # are still cache-immutable individually; only the dynamic page
+    # itself opts out.
+    return HTMLResponse(
+        content=rendered,
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 def _resolve_telemetry_topic(app: str, device: str,
