@@ -11,6 +11,7 @@ from api.routes_device import router as device_router
 from api.routes_admin import router as admin_router
 from api.routes_app import router as app_router
 from api.routes_app_assets import router as app_assets_router
+from api.routes_app_form import router as app_form_router
 from api.routes_app_theme import router as app_theme_router
 from api.routes_oauth import router as oauth_router
 from middleware.csp import CSPMiddleware, router as csp_router
@@ -347,6 +348,14 @@ app.include_router(app_assets_router, tags=["app-assets"])
 # Same mount-order rationale: `_theme.css` is a reserved name that
 # would otherwise be captured as a device id by /app/{app}/{device}.
 app.include_router(app_theme_router, tags=["app-theme"])
+
+# Customer-facing form-submit handler (P3 of fr_catalog_app_ui_plan.md).
+# The POST handler matches the GET path's auth + ACL gating, so no
+# auth-middleware exception is needed — the existing
+# `_path_needs_admin_auth("/app/<app>/<device>")` rule covers both
+# methods. Mount BEFORE app_router so its POST route doesn't
+# get shadowed by the GET-only handlers there.
+app.include_router(app_form_router, tags=["app-form"])
 
 # No prefix on the router — routes_app declares its own (`/app/...` and
 # `/api/app/...`) so the route handlers' paths read naturally and

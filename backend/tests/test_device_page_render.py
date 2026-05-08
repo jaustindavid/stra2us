@@ -66,7 +66,7 @@ def test_data_app_attr_substituted(fake_redis):
         "vars": {"x": {"type": "int", "scope": ["app"]}},
         "theme": {"primary_color": "#5b3fb8"},
     })
-    response = _run(routes_app._render_device_page("critterchron"))
+    response = _run(routes_app._render_device_page("critterchron", "dev1"))
     body = response.body.decode("utf-8")
     assert 'data-app="critterchron"' in body
     # Placeholder fully substituted — no leftover braces.
@@ -80,7 +80,7 @@ def test_theme_link_includes_hash_for_published_catalog(fake_redis):
         "vars": {"x": {"type": "int", "scope": ["app"]}},
         "theme": {"primary_color": "#5b3fb8"},
     })
-    response = _run(routes_app._render_device_page("critterchron"))
+    response = _run(routes_app._render_device_page("critterchron", "dev1"))
     body = response.body.decode("utf-8")
     # The link tag is present and points at the per-app theme route.
     assert '<link rel="stylesheet" href="/app/critterchron/_theme.css?v=' in body
@@ -97,7 +97,7 @@ def test_theme_link_present_with_empty_hash_when_no_catalog(fake_redis):
     falls back to the inline default in `:root`. Operational
     expectation: a deploy-without-publish doesn't produce a broken
     page, just an unbranded one."""
-    response = _run(routes_app._render_device_page("never-published"))
+    response = _run(routes_app._render_device_page("never-published", "dev1"))
     body = response.body.decode("utf-8")
     assert 'data-app="never-published"' in body
     assert '_theme.css?v="' in body  # query param empty, not missing
@@ -108,7 +108,7 @@ def test_response_is_html_not_file_attachment(fake_redis):
         "app": "demo",
         "vars": {"x": {"type": "int", "scope": ["app"]}},
     })
-    response = _run(routes_app._render_device_page("demo"))
+    response = _run(routes_app._render_device_page("demo", "dev1"))
     # HTMLResponse, not FileResponse — Content-Type set explicitly,
     # no Content-Disposition header.
     assert response.media_type == "text/html"
@@ -123,7 +123,7 @@ def test_static_assets_link_unchanged(fake_redis):
         "app": "demo",
         "vars": {"x": {"type": "int", "scope": ["app"]}},
     })
-    response = _run(routes_app._render_device_page("demo"))
+    response = _run(routes_app._render_device_page("demo", "dev1"))
     body = response.body.decode("utf-8")
     assert '/app/_static/styles.css' in body
 
@@ -136,7 +136,7 @@ def test_app_js_link_unchanged(fake_redis):
         "app": "demo",
         "vars": {"x": {"type": "int", "scope": ["app"]}},
     })
-    response = _run(routes_app._render_device_page("demo"))
+    response = _run(routes_app._render_device_page("demo", "dev1"))
     body = response.body.decode("utf-8")
     assert '/app/_static/app.js' in body
 
@@ -151,7 +151,7 @@ def test_no_unsubstituted_placeholders_in_output(fake_redis):
         "vars": {"x": {"type": "int", "scope": ["app"]}},
         "theme": {"primary_color": "#fff"},
     })
-    response = _run(routes_app._render_device_page("demo"))
+    response = _run(routes_app._render_device_page("demo", "dev1"))
     body = response.body.decode("utf-8")
     assert "{{" not in body
     assert "}}" not in body

@@ -33,3 +33,9 @@ defusedxml==0.7.1
 # it here because the server now reads `_catalog/<app>` directly,
 # rather than just relaying the bytes.
 pyyaml==6.0.3
+# Form-urlencoded body parsing for the customer-facing form-submit
+# handler (P3, backend/src/api/routes_app_form.py). FastAPI uses
+# `python-multipart` for `await request.form()`; without it
+# starlette raises "library must be installed" at request time
+# rather than import time.
+python-multipart==0.0.27

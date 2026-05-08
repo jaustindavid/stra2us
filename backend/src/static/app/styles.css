@@ -484,3 +484,205 @@ body.app-page {
     cursor: pointer;
 }
 .btn-secondary:hover { color: var(--app-text); }
+
+/* =====================================================================
+   P3 — server-rendered customer-facing form (catalog-app section).
+   docs/fr_catalog_app_ui_plan.md / docs/fr_catalog_app_ui.md.
+   The form lives inside `<section class="catalog-app">`, scoped so
+   theme variables can override appearance without leaking into the
+   surrounding page chrome (header, activity tail, footer).
+   ===================================================================== */
+
+.catalog-app {
+    margin-bottom: 24px;
+}
+
+.catalog-app-chrome {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 0 8px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 16px;
+}
+.catalog-logo {
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+}
+.catalog-product-name {
+    margin: 0;
+    font-size: 1.2rem;
+    font-weight: 600;
+    color: var(--app-text);
+}
+
+.catalog-header-md,
+.catalog-footer-md {
+    margin: 12px 0 16px;
+    color: var(--app-text);
+    font-size: 0.95rem;
+}
+.catalog-header-md h2,
+.catalog-header-md h3,
+.catalog-header-md h4 {
+    margin: 0 0 8px;
+}
+.catalog-header-md a,
+.catalog-footer-md a {
+    color: var(--app-accent);
+}
+.catalog-footer-md {
+    color: var(--muted);
+    font-size: 0.85rem;
+    margin-top: 24px;
+}
+
+/* The inline form takes over the page where the old setting-cards
+   list lived. Keeps the existing card visual style (panel bg + border
+   + rounded corners) so the look is continuous. */
+.catalog-form {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.catalog-form .setting-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.catalog-form .setting-label {
+    font-weight: 600;
+    color: var(--app-text);
+}
+
+.catalog-form .setting-help {
+    color: var(--muted);
+    font-size: 0.85rem;
+}
+
+.catalog-form .setting-help-md {
+    color: var(--muted);
+    font-size: 0.85rem;
+}
+.catalog-form .setting-help-md code {
+    background: var(--app-bg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 0 4px;
+    font-size: 0.9em;
+}
+.catalog-form .setting-help-md a {
+    color: var(--app-accent);
+}
+
+/* Off-spec warning badge — see FR's "Implications for displaying
+   out-of-spec values." Quotes the verbatim stored value so the
+   customer sees what the device wrote even when the widget itself
+   only advertises catalog-valid choices. Uses the existing
+   `--danger` color (NOT themable) because it's a semantic
+   "warning" signal, not vendor branding. */
+.catalog-form .setting-warning {
+    background: #fdecea;
+    color: var(--danger);
+    border: 1px solid #f5c2c0;
+    border-radius: var(--radius);
+    padding: 4px 10px;
+    font-size: 0.85rem;
+    align-self: flex-start;
+}
+.catalog-form .setting-warning strong {
+    font-weight: 700;
+}
+
+/* Form controls — match the existing modal-input look so widgets
+   render uniformly across types. The :invalid styling pairs with
+   HTML5's `pattern`/`min`/`max` validation; P4 layers
+   `data-valid="true|false"` on top via touched_state.js for
+   per-keystroke feedback. */
+.catalog-form input[type="text"],
+.catalog-form input[type="number"],
+.catalog-form input[type="password"],
+.catalog-form input[type="range"],
+.catalog-form select,
+.catalog-form textarea {
+    width: 100%;
+    padding: 8px 10px;
+    font-size: 1rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--app-bg);
+    color: var(--app-text);
+    font-family: inherit;
+    box-sizing: border-box;
+}
+.catalog-form textarea {
+    resize: vertical;
+    min-height: 80px;
+}
+.catalog-form input[type="range"] {
+    padding: 0;
+    background: transparent;
+}
+.catalog-form input:focus,
+.catalog-form select:focus,
+.catalog-form textarea:focus {
+    outline: 2px solid var(--app-primary);
+    outline-offset: -1px;
+}
+/* Future-paired styling for P4's `data-valid` attribute. The
+   browser-native `:invalid` styling activates on submit attempt
+   for `pattern`/`min`/`max` mismatches; data-valid lets P4's
+   `input`-event handler paint per-keystroke. */
+.catalog-form input[data-valid="false"],
+.catalog-form textarea[data-valid="false"] {
+    outline: 2px solid var(--danger);
+}
+.catalog-form input[data-valid="true"],
+.catalog-form textarea[data-valid="true"] {
+    outline: 2px solid #157a3a;  /* same green as status-online */
+}
+
+/* Radio group: stack vertically so labels stay readable on
+   narrow screens. Each radio + label pair gets a small gap. */
+.catalog-form .radio-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.catalog-form .radio-option {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.95rem;
+    color: var(--app-text);
+}
+
+/* Reveal button next to encrypted secrets — same shape as the
+   pre-P3 reveal-btn that the inline form keeps using. */
+.catalog-form .reveal-btn {
+    align-self: flex-start;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--app-primary);
+    border-radius: var(--radius);
+    padding: 4px 12px;
+    font-size: 0.85rem;
+    cursor: pointer;
+    margin-top: 4px;
+}
+.catalog-form .reveal-btn:hover {
+    background: color-mix(in srgb, var(--app-primary) 6%, transparent);
+}
+
+.catalog-form-actions {
+    margin-top: 8px;
+    display: flex;
+    justify-content: flex-end;
+}

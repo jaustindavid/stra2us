@@ -30,7 +30,9 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from core.redis_client import get_redis_client
 from api.dependencies import get_admin_context, check_acl
-from api.routes_app_theme import load_theme
+from api.routes_app_theme import load_catalog_dict, load_theme
+from services.page_renderer import render_page
+from services.value_resolver import resolve_value
 
 
 router = APIRouter()
@@ -60,27 +62,96 @@ def _device_template() -> str:
     return _DEVICE_TEMPLATE
 
 
-async def _render_device_page(app: str) -> HTMLResponse:
-    """Substitute the per-app branding placeholders in `device.html`
-    and return as HTML.
+async def _render_device_page(app: str, device: str) -> HTMLResponse:
+    """Substitute placeholders in `device.html` and return as HTML.
+
+    Renders the customer-facing form server-side (P3): catalog +
+    per-device current values flow through `page_renderer` to
+    produce the inline form HTML, which replaces the
+    `{{SETTINGS_SECTION}}` placeholder in the template.
 
     `{{APP}}` is the catalog slug (already constrained to
-    `^[a-z][a-z0-9_]*$` by the catalog schema; selector-safe with no
-    escaping). `{{THEME_HASH}}` comes from the catalog's theme block
-    via the same `load_theme` helper the `_theme.css` route uses, so
-    the page's `<link>` URL and the route the browser fetches share
-    a hash by construction. Empty hash when no catalog/theme is
-    published — the per-app stylesheet's empty-rule fallback covers
-    that case.
+    `^[a-z][a-z0-9_]*$` by the catalog schema; selector-safe with
+    no escaping). `{{THEME_HASH}}` comes from the catalog's theme
+    block via `load_theme`, so the page's `<link>` URL and the
+    route the browser fetches share a hash by construction. Empty
+    hash + empty settings section when no catalog is published —
+    the page degrades to "you're logged in but the catalog isn't
+    here yet" rather than 500'ing.
+
+    `{{TELEMETRY_TOPIC}}` + `{{HEARTBEAT_SECONDS}}` are surfaced
+    as `data-*` attributes on `<body>` so app.js can drive the
+    status badge + activity tail without re-fetching the catalog
+    client-side. P3 retired the client-side catalog parse; these
+    two values are the only catalog-derived config the JS still
+    needs.
     """
     template = _device_template()
+    catalog = await load_catalog_dict(app)
     _, theme_hash = await load_theme(app)
+    settings_html = await _render_settings_section(app, device, catalog)
+    telemetry_topic = _resolve_telemetry_topic(app, device, catalog)
+    heartbeat_seconds = _resolve_heartbeat_seconds(catalog)
     rendered = (
         template
         .replace("{{APP}}", app)
+        .replace("{{DEVICE}}", device)
         .replace("{{THEME_HASH}}", theme_hash or "")
+        .replace("{{SETTINGS_SECTION}}", settings_html)
+        .replace("{{TELEMETRY_TOPIC}}", telemetry_topic)
+        .replace("{{HEARTBEAT_SECONDS}}", str(heartbeat_seconds))
     )
     return HTMLResponse(content=rendered)
+
+
+def _resolve_telemetry_topic(app: str, device: str,
+                             catalog: dict | None) -> str:
+    """Catalog-declared `telemetry_topic` with `{app}` / `{device}`
+    placeholder substitution; falls back to the FR's convention
+    `<app>/public/heartbeep` when the catalog is missing or
+    doesn't declare one. Mirrors the pre-P3 client-side resolver
+    in app.js (`resolveTelemetryTopic`)."""
+    declared = (catalog or {}).get("telemetry_topic") or "{app}/public/heartbeep"
+    return (
+        declared
+        .replace("{app}", app)
+        .replace("{device}", device)
+    )
+
+
+def _resolve_heartbeat_seconds(catalog: dict | None) -> int:
+    """Catalog-declared cadence with the customer-page's 60s
+    fallback. Drives the status-badge thresholds in app.js."""
+    declared = (catalog or {}).get("heartbeat_interval_seconds")
+    if isinstance(declared, int) and declared > 0:
+        return declared
+    return 60
+
+
+async def _render_settings_section(app: str, device: str,
+                                   catalog: dict | None) -> str:
+    """Build the inline form HTML by resolving each customer-facing
+    var's current value (device → public → catalog default) and
+    handing the result to `page_renderer.render_page`. Returns the
+    full `<section class="catalog-app">…</section>` markup, or a
+    polite "no catalog yet" message when no catalog is published
+    for this app."""
+    if catalog is None:
+        return (
+            '<section class="catalog-app">'
+            '<p class="hint">No catalog published for this app yet — '
+            'check back once your operator has run '
+            '<code>stra2us catalog publish</code>.</p>'
+            '</section>'
+        )
+    redis = get_redis_client()
+    values: dict = {}
+    for name, var in (catalog.get("vars") or {}).items():
+        if not isinstance(var, dict) or not var.get("label"):
+            # Operator-only var (no `label:` per fr_application_view).
+            continue
+        values[name] = await resolve_value(redis, app, device, name, var)
+    return render_page(app=app, device=device, catalog=catalog, values=values)
 
 
 @router.get("/app", include_in_schema=False)
@@ -119,7 +190,7 @@ async def device_page(app: str, device: str, request: Request):
             os.path.join(STATIC_DIR, "landing.html"),
             status_code=404,
         )
-    return await _render_device_page(app)
+    return await _render_device_page(app, device)
 
 
 @router.get("/api/app/lookup_device", include_in_schema=False)

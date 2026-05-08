@@ -38,35 +38,51 @@ router = APIRouter()
 _CACHE_CONTROL = "public, max-age=31536000, immutable"
 
 
-async def load_theme(app: str) -> tuple[dict | None, str | None]:
-    """Read the catalog YAML for `app` from KV, return
-    `(theme_dict_or_None, hash)`. Returns `(None, None)` when no
-    catalog is published — caller decides whether to 404 or emit
-    an empty rule.
+async def load_catalog_dict(app: str) -> dict | None:
+    """Read + parse the catalog YAML stashed at `_catalog/<app>`.
+
+    Returns the parsed dict, or None on any failure (key absent,
+    msgpack corruption, YAML malformed, top-level shape wrong).
+    Each failure mode falls back to the same "no catalog" answer
+    so a 500 here never reaches the customer; the caller chooses
+    between 404 or a sensible empty render.
 
     The YAML is the source of truth — we re-parse on each request
     rather than caching, because the catalog can be republished
     out-of-band (the CLI writes directly to KV) and we'd otherwise
-    serve stale theme CSS until the next process restart. The
-    parse is fast (~1ms for typical catalog sizes); the
-    `Cache-Control: immutable` response header means real-world
-    requests don't even hit this code path on most page loads.
+    serve stale until the next process restart. The parse is fast
+    (~1ms for typical catalog sizes); the `Cache-Control: immutable`
+    response header on the customer page's resources means
+    real-world requests don't even hit this code path on most
+    page loads.
     """
     redis = get_redis_client()
     raw = await redis.get(f"kv:_catalog/{app}")
     if raw is None:
-        return None, None
+        return None
     try:
         unpacked = msgpack.unpackb(raw, raw=False)
     except Exception:
-        return None, None
+        return None
     if not isinstance(unpacked, str):
-        return None, None
+        return None
     try:
         doc = yaml.safe_load(unpacked)
     except yaml.YAMLError:
-        return None, None
+        return None
     if not isinstance(doc, dict):
+        return None
+    return doc
+
+
+async def load_theme(app: str) -> tuple[dict | None, str | None]:
+    """Read the catalog YAML for `app` from KV, return
+    `(theme_dict_or_None, hash)`. Returns `(None, None)` when no
+    catalog is published — caller decides whether to 404 or emit
+    an empty rule. Thin wrapper over `load_catalog_dict` that
+    extracts the `theme:` block."""
+    doc = await load_catalog_dict(app)
+    if doc is None:
         return None, None
     theme = doc.get("theme")
     if theme is not None and not isinstance(theme, dict):

@@ -519,3 +519,188 @@ the route isn't loaded.
   worth carrying — the demonstration mutates a state on
   staging, captures the before/after, then restores so the
   customer-facing demo URL matches the documented baseline.
+
+---
+
+## P3 — Renderer dispatch *(in review — drafted 2026-05-08)*
+
+**Status:** code complete, 168 tools + 212 backend tests green
+(+112 backend from P2), awaiting staging redeploy + manual
+walkthrough sign-off.
+
+### Architecture decision (operator-confirmed before coding)
+
+Pre-P3 the customer page was *client-rendered*: `device.html` shipped
+empty placeholders and `app.js` fetched the catalog YAML, parsed it
+with js-yaml (loaded from cdn.jsdelivr.net), and `innerHTML`-injected
+a list of setting cards with Reveal/Edit modal interaction. The FR's
+"Renderer dispatch" model is *server-rendered* — inline form widgets
+per the dispatch table, no per-field modal. We chose **Option A
+(replace client-side rendering with server-rendered widgets)** —
+cleaner end state, drops js-yaml entirely (CSP win), aligns the
+markup with what P0's `touched_state.js` expects.
+
+**Form-submit handler — strict-naive** (operator-confirmed):
+P3 ships the simplest possible POST handler — iterate every
+form field, write to KV. Off-spec stomping and write_only-empty
+clearing the stored secret are pre-P4 footguns the FR explicitly
+defers; the gap to P4 is shallow, lowest-risk option preferred
+over best-functional.
+
+### Deliverables landed
+
+| Plan item | Path | Notes |
+|---|---|---|
+| Per-widget renderer | [`backend/src/services/widget_renderer.py`](../backend/src/services/widget_renderer.py) | Dispatch table covers every FR row + bool/float/legacy `type: enum`. Renders inner form control only; off-spec values clamp the *display* but `data-original` carries the raw value for P4. |
+| Markdown cache | [`backend/src/services/markdown_cache.py`](../backend/src/services/markdown_cache.py) | `(app, publish_hash, block_id)` keyed; thread-safe; sanitizer call-counted in tests. |
+| Vendored markdown sanitizer | [`backend/src/services/markdown_render.py`](../backend/src/services/markdown_render.py) | Byte-equal copy of `tools/stra2us_cli/sanitizers/markdown.py`; parity test (`test_markdown_render_parity.py`) imports both and asserts byte-equal output on the FR's XSS corpus. |
+| Value resolver | [`backend/src/services/value_resolver.py`](../backend/src/services/value_resolver.py) | `<app>/<device>/<key>` → `<app>/public/<key>` → catalog default chain; encrypted-flag preserved. |
+| Page assembler | [`backend/src/services/page_renderer.py`](../backend/src/services/page_renderer.py) | Composes widget + markdown + chrome + off-spec badge; emits `<section class="catalog-app">` with `data-app` + per-card `data-var` + every common attribute the touched-state JS expects in P4. |
+| Device-page handler | [`backend/src/api/routes_app.py`](../backend/src/api/routes_app.py) | New `_render_device_page(app, device)` orchestrates load → resolve → render → substitute; includes telemetry topic + cadence as `<body>` data-attrs so the trimmed `app.js` doesn't re-fetch the catalog. |
+| Form-submit handler | [`backend/src/api/routes_app_form.py`](../backend/src/api/routes_app_form.py) | `POST /app/<app>/<device>` — strict-naive write-each-field; `json.loads` type recovery mirroring the existing admin endpoint; encrypted-flag preserved on writes; POST-redirect-GET (303). |
+| Device template | [`backend/src/static/app/device.html`](../backend/src/static/app/device.html) | New `{{SETTINGS_SECTION}}` placeholder; body data-attrs for `data-device` / `data-telemetry-topic` / `data-heartbeat-seconds`; `<script src="https://cdn.jsdelivr.net/.../js-yaml...">` removed. |
+| Trimmed app.js | [`backend/src/static/app/app.js`](../backend/src/static/app/app.js) | Cut from 829 to ~265 lines. Drops catalog YAML fetch, settings-card rendering, edit modal, `validateInput`/`encodeForAdmin`/`editControlHtml`/etc. Keeps landing form, telemetry tail, status badge, Reveal flow. |
+| New CSS rules | [`backend/src/static/app/styles.css`](../backend/src/static/app/styles.css) | `.catalog-app`, `.catalog-app-chrome`, `.catalog-form` + `.setting-card`, `.setting-warning` (off-spec badge), `.radio-group`, future-paired `[data-valid="..."]` styling for P4. |
+| pyyaml + python-multipart deps | [`backend/requirements.txt`](../backend/requirements.txt) | `python-multipart==0.0.27` for FastAPI's `await request.form()`. (`pyyaml` already on board from P2.) |
+
+### Test counts
+
+* Backend: **212 passing** (was 100). +112 P3:
+  * 35 `test_widget_renderer` (per-row snapshots, off-spec, write_only, escaping, forward-compat)
+  * 18 `test_markdown_render_parity` (byte-equal vs CLI on the XSS corpus)
+  * 8 `test_markdown_cache` (cache discipline, hit/miss counting, publish_hash invalidation)
+  * 13 `test_value_resolver` (fallback chain rungs, type coercion, encrypted-flag, corruption)
+  * 20 `test_page_renderer` (composed snapshot, off-spec badges, help_markdown caching)
+  * 9 `test_app_form` (strict-naive write, type recovery, encrypted-flag preservation, slash-rejection, soft-404)
+  * 9 `test_device_page_integration` (full GET path: catalog from KV → resolve → render → template substitution)
+* Tools: **168 passing**, unchanged (P3 doesn't touch CLI).
+
+### Deviations from plan
+
+1. **Backend imports the catalog as a parsed dict, not as the
+   CLI's pydantic `Var` model.** Earlier draft had
+   `widget_renderer` taking `Var`; that pulls
+   `tools/stra2us_cli` into the backend's runtime, which
+   the docker build context (`./backend`) doesn't reach. Refactored
+   to dict-based input, matching the established pattern from
+   theme_serializer + assets + lint duplication. Trade: lose
+   pydantic shape validation at the boundary. Defense:
+   `.get(...)` access throughout + parser-level validation at
+   publish time. *Followup:* change docker build context to repo
+   root so we can `pip install -e tools/` and consolidate.
+
+2. **Markdown sanitizer is vendored, with a drift-detection
+   parity test.** Same root cause as #1 — backend can't import
+   from `tools/stra2us_cli/sanitizers/`. Test
+   (`test_markdown_render_parity.py`) imports both copies and
+   asserts byte-equal output on the FR's XSS corpus. Any
+   drift fails CI. *Same followup as above:* consolidating the
+   build context collapses the two copies.
+
+3. **`<body data-app="...">` carries telemetry config.** Pre-P3
+   `app.js` parsed the catalog client-side to read
+   `telemetry_topic` + `heartbeat_interval_seconds`. The trimmed
+   `app.js` no longer fetches the catalog. The server now writes
+   resolved values onto `<body>` as `data-telemetry-topic` +
+   `data-heartbeat-seconds`. Same idiom as `data-app`; no extra
+   round-trip; CSP-clean.
+
+4. **`color-mix()` for hover tints (still).** Carried over from
+   P2 since the new `.reveal-btn:hover` reuses the same shape.
+   Browser support already vetted in P2.
+
+5. **device_page renders the polite "no catalog yet" hint when
+   the catalog is unpublished.** The plan didn't call out this
+   case; pre-P3 the page would have shown "Loading settings…"
+   forever. P3 surfaces a clear "run `stra2us catalog publish`"
+   message so a deploy-without-publish doesn't look broken.
+
+### Open question resolutions
+
+| Open Q | Decision | Where |
+|---|---|---|
+| Page model: client- vs server-rendered widgets | Server-rendered (Option A); drop js-yaml + edit modal | [`page_renderer.py`](../backend/src/services/page_renderer.py) + [`app.js`](../backend/src/static/app/app.js) |
+| Form-submit risk profile | Strict-naive (Option A) — accepts pre-P4 footguns; P4 cleans up | [`routes_app_form.py`](../backend/src/api/routes_app_form.py) |
+| Backend imports of `stra2us_cli` | Vendor + parity test for the sanitizer; dict-based input for the catalog model | new files in `backend/src/services/` |
+| Telemetry config flow | Server-rendered `<body data-*>` attrs | `_render_device_page` |
+
+### Sign-off checklist (anticipated; final form awaits walkthrough)
+
+| Item | Status |
+|---|:---:|
+| All snapshot tests green | ✅ 212 backend + 168 tools |
+| Off-spec values show warning + verbatim value | ✅ unit + integration |
+| Markdown blocks render correctly with caching | ✅ test_markdown_cache + test_page_renderer |
+| Native browser validation blocks bad submits | ⏳ (HTML5 native; awaits browser walkthrough) |
+| No JS required for any P3 behavior | ✅ form is server-rendered + browser-native submit; app.js handles only telemetry/Reveal |
+| CSP clean | ⏳ (awaits staging — but `cdn.jsdelivr.net` removed; everything else self-hosted) |
+
+### Walkthrough (pending staging redeploy)
+
+| Step | Plan | Status |
+|---|---|:---:|
+| 1. Open critterchron page; confirm dispatch table widgets render | Browser; `display_mode`=dropdown, `ir_brightness`=slider, `wifi_password`=masked, `greeting`=textarea, `start_time`=text+pattern; header md above; logo+product name in chrome | ⏳ |
+| 2. Set `ir_brightness=129` via admin raw KV; refresh; confirm slider pinned at 100 + warning badge `129` + raw 129 on data-original | Browser + admin KV editor | ⏳ |
+| 3. Submit the form via browser-native submit; in-range values save; HTML5 blocks out-of-range | Browser | ⏳ |
+| 4. Hand-edit catalog with `widget: future_widget_xyz`; renderer falls back to type default | CLI publish + browser refresh | ⏳ |
+
+### Items deferred / followups
+
+1. **Build-context consolidation.** P3 vendored
+   `markdown_render.py` and dropped pydantic catalog imports
+   because `./backend` is the docker build context.
+   Switching to the repo root (with `dockerfile: backend/Dockerfile`
+   in compose) and `pip install -e tools/` collapses the two
+   copies + restores pydantic validation at the backend's edge.
+   Tracked here; not blocking P3.
+
+2. **Server-side lint at catalog upload.** Still pending from
+   P0 → P1 → P2's deferred lists. P3 reads catalog dicts
+   server-side (the integration tests prove the read+parse path
+   works); calling lint after parse is a small addition. Likely
+   lands as a P5 or pre-P5 item.
+
+3. **YAML 1.1 truthy-enum doc note.** Original P0 followup;
+   still open.
+
+4. **Edit modal removal in admin too?** Pre-P3 the edit modal's
+   primitives were *copied* from admin's catalog editor. The
+   customer-page copy is gone now; the admin copy stays. P5
+   audit may surface this as a deduplication candidate but it's
+   not a security or correctness issue.
+
+5. **Reveal button auth path.** Pre-P3 the Reveal flow used
+   `/api/admin/peek/kv/<path>`. P3's trimmed `app.js` keeps
+   that path. The customer is admin-authed (cookie / OAuth),
+   so the existing path is fine — flagging here so P5's audit
+   knows it's intentional.
+
+### Rollback
+
+Reverting P3 leaves staging on P2: theme stylesheet still works,
+asset pipeline still works, catalog YAML at `_catalog/<app>` is
+unchanged. The customer page would lose the inline form (the
+template's `{{SETTINGS_SECTION}}` would be a literal string in
+the page) — but P3 isn't deployed without the route handler
+reverting too. Standard "revert the merge commit" flow applies.
+
+### Deploy notes
+
+* Two new backend deps (`python-multipart`) — image rebuilds the
+  requirements layer. `pyyaml` was already in from P2.
+* The biggest user-visible change in P3 is that the customer
+  page is now server-rendered — first paint shows the form
+  filled in. Pre-P3 there was a ~100ms "Loading settings…"
+  flicker while app.js did its YAML fetch + parse. The
+  flicker is gone, which is the most concrete UX win the FR's
+  prose was promising.
+* `cdn.jsdelivr.net/npm/js-yaml` is no longer loaded by the
+  customer page. Once staging is on P3, the
+  `Content-Security-Policy-Report-Only` violation count for the
+  customer page should drop to zero — input for P5's audit.
+* The 6 P3 sandbox files to copy are 5 new (`widget_renderer`,
+  `markdown_render`, `markdown_cache`, `value_resolver`,
+  `page_renderer`, `routes_app_form`) plus the modified set
+  (`device.html`, `app.js`, `styles.css`, `routes_app.py`,
+  `routes_app_theme.py`, `main.py`, `requirements.txt`). Test
+  files (7 new `test_*.py` in `backend/tests/`).
