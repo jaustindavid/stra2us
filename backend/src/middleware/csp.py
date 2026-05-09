@@ -31,15 +31,31 @@ from fastapi.responses import Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
+# Hosts that Cloudflare's "Browser Insights" / Web Analytics
+# beacon needs reachable. CF auto-injects
+# `<script src="https://static.cloudflareinsights.com/beacon.min.js/...">`
+# into HTML responses passing through their tunnel when the
+# zone has Browser Insights enabled. The beacon then reports
+# measurements via `fetch` back to the same host. The setting
+# is per-zone (per Cloudflare's UI), so disabling it for the
+# staging subdomain alone would require a Configuration Rule;
+# we live with the trade and allowlist the host in
+# `script-src` + `connect-src`. **Adding any new entry to this
+# list is a real CSP relaxation — discuss in PR.** Keep it
+# tight: per-host, not wildcard, and only on the directives
+# that actually need it.
+_CF_INSIGHTS_HOST = "https://static.cloudflareinsights.com"
+
 # The full FR policy. Order is informational; browsers don't care.
-# Update this list and `docs/fr_catalog_app_ui.md` together.
+# Update this list and `docs/fr_catalog_app_ui.md` together when
+# adding/removing directives.
 DEFAULT_DIRECTIVES: tuple[tuple[str, str], ...] = (
     ("default-src", "'self'"),
-    ("script-src", "'self'"),
+    ("script-src", f"'self' {_CF_INSIGHTS_HOST}"),
     ("style-src", "'self'"),
     ("img-src", "'self'"),
     ("font-src", "'self'"),
-    ("connect-src", "'self'"),
+    ("connect-src", f"'self' {_CF_INSIGHTS_HOST}"),
     ("frame-ancestors", "'none'"),
     ("base-uri", "'self'"),
     ("form-action", "'self'"),

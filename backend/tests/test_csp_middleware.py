@@ -68,6 +68,30 @@ def test_no_unsafe_inline_or_eval():
     assert "'unsafe-eval'" not in policy
 
 
+def test_cloudflare_insights_allowlisted_only_where_needed():
+    """The CF Browser Insights beacon needs `script-src` (loads
+    `beacon.min.js`) + `connect-src` (reports back). The host
+    must NOT appear in any other directive — keeps the
+    third-party trust as narrow as possible. If a future change
+    adds `static.cloudflareinsights.com` to `img-src` or
+    `frame-src` etc, that's a meaningful CSP relaxation; this
+    test fails to make it visible."""
+    policy = build_policy()
+    cf_host = "static.cloudflareinsights.com"
+    # Required in these two directives.
+    for directive in ("script-src", "connect-src"):
+        # `<directive> '...' ... <cf_host> ...;` — the host is
+        # immediately after `'self'` in the source list.
+        assert f"{directive} 'self' https://{cf_host}" in policy, (
+            f"{directive} must allowlist {cf_host}"
+        )
+    # NOT in any other directive — count occurrences should be
+    # exactly two (script-src + connect-src).
+    assert policy.count(cf_host) == 2, (
+        f"{cf_host} appeared in unexpected directive(s)"
+    )
+
+
 def test_report_only_header_emitted_by_default():
     client = TestClient(_app())
     r = client.get("/")
