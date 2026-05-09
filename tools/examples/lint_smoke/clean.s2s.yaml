@@ -1,0 +1,33 @@
+# Lint smoke fixture — fully clean catalog.
+#
+# Used for post-deploy operator verification of the `catalog lint`
+# subcommand and the underlying lint passes. Intentionally minimal;
+# any rule that fires here is a regression in the lint plumbing
+# itself rather than the catalog's content.
+#
+# Lives in `tools/examples/lint_smoke/` (its own subdir) so the
+# lint's asset-discovery (which looks at `<catalog-path>.parent /
+# _assets`) doesn't bleed in the sibling `_assets/` from
+# `critterchron_v2.s2s.yaml` and warn "unused asset". Subdir with
+# no `_assets/` sibling = asset_listing=None = no asset lint, clean.
+#
+# Lives in `tools/examples/` rather than `tools/tests/fixtures/`
+# because the consumer is a human running a verification command,
+# not pytest — even though the file's purpose is "fixture-like".
+#
+# Expected behavior:
+#   stra2us --catalog /tools/examples/lint_smoke/clean.s2s.yaml catalog lint
+#     stdout : "lint_smoke_clean: lint OK (0 warnings)"
+#     stderr : (empty)
+#     exit   : 0
+
+app: lint_smoke_clean
+
+vars:
+  heartbeat_seconds:
+    type: int
+    default: 60
+    scope: [app, device]
+    min: 10
+    max: 3600
+    label: Heartbeat interval

@@ -1580,13 +1580,34 @@ separate so the changelog reads as cause-and-effect.
 (see `Dockerfile`'s `pip install /tools` line), so the new lint
 ships to staging + prod via the normal image-rebuild path.
 
-To verify: from a staging container, run
-`stra2us --catalog <path> catalog lint` against any catalog YAML.
-Any field missing a leg of the secret triplet surfaces a warning;
-clean catalogs print `<app>: lint OK (0 warnings)`. The example
-bundle at `tools/examples/critterchron_v2.s2s.yaml:106-115`
-already has the full triplet on `wifi_password`, so it lints
-clean — useful as a known-good fixture.
+To verify: three checked-in fixtures under
+`tools/examples/lint_smoke/` exercise the lint surface end-to-end
+without ad-hoc heredocs (which evaporate on the next deploy
+since `/tmp` is in the container's writable layer):
+
+```bash
+# clean → exit 0, "lint OK (0 warnings)"
+stra2us --catalog /tools/examples/lint_smoke/clean.s2s.yaml catalog lint
+
+# 3 secret-pairing warnings → exit 0, "lint OK (3 warnings)"
+stra2us --catalog /tools/examples/lint_smoke/secret_pairing.s2s.yaml catalog lint
+
+# widget:secret on int (publish-blocking error) → exit 5
+stra2us --catalog /tools/examples/lint_smoke/widget_error.s2s.yaml catalog lint
+echo $?
+```
+
+Each fixture's header comment documents its expected stdout /
+stderr / exit code, so the file itself is the contract. They live
+in their own `lint_smoke/` subdir specifically to avoid the
+asset-discovery pulling in `critterchron_v2.s2s.yaml`'s sibling
+`_assets/logo.svg` and warning "unused asset" — that bled in
+when they were colocated and made every fixture's expected
+output wrong.
+
+The catalog at `tools/examples/critterchron_v2.s2s.yaml:106-115`
+also lints clean (it has the full triplet on `wifi_password`),
+useful as a larger known-good reference.
 
 ### What's left
 

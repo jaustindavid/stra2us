@@ -1,0 +1,28 @@
+# Lint smoke fixture — error case (publish-blocking).
+#
+# `widget: secret` is only valid on `type: string`. Setting it on a
+# numeric type is a hard error in `_lint_field_widget` and exits 5
+# (publish-blocking; mirrors `cmd_catalog_publish`'s exit code).
+#
+# Expected behavior:
+#   stra2us --catalog /tools/examples/lint_smoke/widget_error.s2s.yaml catalog lint
+#     stdout : (empty)
+#     stderr : "error: catalog lint failed:" + the vars.port.widget detail
+#     exit   : 5
+#
+# Note: this fixture also incidentally trips a secret-pairing
+# warning (no `write_only`, no `encrypted` — the new v1.6.4 rules)
+# but errors short-circuit the success-line print, so the warning
+# lines DO appear on stderr above the error. Operators verifying
+# the error path should see warnings AND error, with the error
+# being load-bearing for the exit code.
+
+app: lint_smoke_widget_error
+
+vars:
+  port:
+    type: int
+    scope: [app]
+    default: 8080
+    label: Port number (widget:secret on int — error)
+    widget: secret
