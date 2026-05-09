@@ -412,6 +412,22 @@ function closeAclModal() {
 
 // --- Device picker (called from the admin-user ACL editor) ----------
 
+// Mirrors the backend's `_prefix_matches` (api/dependencies.py): an ACL
+// rule with `prefix` covers `path` when prefix is `*`, equals path, or is
+// a parent (path starts with prefix + "/"). Used by the picker to mark
+// devices as "already granted" when a wildcard or app-level rule covers
+// them, not just exact <app>/<device> matches.
+//
+// Pre-v1.6.3 the picker used `p.prefix === token` everywhere, so a user
+// with `*:rw` (or `<app>:rw`) saw every device as un-granted — surprising
+// for global admins and led to the picker pushing redundant rules in.
+function _aclPrefixCovers(prefix, path) {
+    if (!prefix) return false;
+    if (prefix === '*') return true;
+    if (prefix === path) return true;
+    return path.startsWith(prefix + '/');
+}
+
 let _devicePickerSelected = new Set();   // "<app>/<device>" tokens
 
 async function openDevicePicker() {
@@ -447,13 +463,15 @@ async function openDevicePicker() {
                     <ul>
                         ${devices.map(d => {
                             const token = `${app}/${d}`;
-                            // Pre-check if this device is already in the
-                            // ACL form, so the operator can see what's
-                            // already covered (still selectable — selecting
-                            // is idempotent thanks to the dedupe in
-                            // confirmDevicePicker).
+                            // Pre-check if this device is already covered
+                            // by any existing ACL rule — exact match,
+                            // app-level wildcard, or `*:rw`. Mirrors the
+                            // backend's _prefix_matches semantics (see
+                            // _aclPrefixCovers above). Pre-v1.6.3 used
+                            // strict equality, so `*:rw` users saw every
+                            // device as un-granted.
                             const already = aclCurrentPermissions.some(
-                                p => p.prefix === token
+                                p => _aclPrefixCovers(p.prefix, token)
                             );
                             return `<li>
                                 <label>
@@ -515,18 +533,23 @@ function confirmDevicePicker() {
     // Per design decisions: <app>/<device> at rw, <app>/public at r,
     // dedupe against any existing rules so re-applying the picker is
     // safe.
+    // Dedupe via _aclPrefixCovers, not strict equality: if the operator
+    // already has `*:rw` or `<app>:rw`, don't push a redundant
+    // `<app>/<device>:rw` (or `<app>/public:r`) row. Pre-v1.6.3 we'd
+    // pile in redundant rules whenever a wildcard or app-level rule
+    // already covered the picker's tokens.
     const apps = new Set();
     _devicePickerSelected.forEach(token => {
         const slash = token.indexOf('/');
         const app = token.substring(0, slash);
         apps.add(app);
-        if (!aclCurrentPermissions.some(p => p.prefix === token)) {
+        if (!aclCurrentPermissions.some(p => _aclPrefixCovers(p.prefix, token))) {
             aclCurrentPermissions.push({prefix: token, access: 'rw'});
         }
     });
     apps.forEach(app => {
         const publicPrefix = `${app}/public`;
-        if (!aclCurrentPermissions.some(p => p.prefix === publicPrefix)) {
+        if (!aclCurrentPermissions.some(p => _aclPrefixCovers(p.prefix, publicPrefix))) {
             aclCurrentPermissions.push({prefix: publicPrefix, access: 'r'});
         }
     });
