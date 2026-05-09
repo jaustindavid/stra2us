@@ -385,7 +385,7 @@ function renderStatusBadge(bucket, ageSec, customDetail) {
     } else if (ageSec === null || ageSec === undefined) {
         detail.innerText = '';
     } else {
-        detail.innerText = `Last seen ${formatAge(ageSec)} ago`;
+        detail.innerText = `Last seen ${formatAge(ageSec)}`;
     }
 }
 
@@ -407,21 +407,28 @@ function renderActivityList(messages, errorMsg) {
             : String(m.data);
         return `
             <div class="activity-row">
-                <span class="activity-when">${escapeHtml(when)} ago</span>
+                <span class="activity-when">${escapeHtml(when)}</span>
                 <span class="activity-payload">${escapeHtml(payloadStr)}</span>
             </div>
         `;
     }).join('');
 }
 
+// Returns a relative-time phrase. The sub-5s case is a complete
+// phrase on its own ("just now"); every other branch is a duration
+// followed by " ago". Callers concatenate it directly into a
+// surrounding sentence ("Last seen ${formatAge(...)}") without
+// adding their own " ago" suffix — pre-v1.6.3 the sub-5s case
+// rendered as "just now ago" because the suffix was tacked on at
+// the call site.
 function formatAge(seconds) {
     if (seconds < 5) return 'just now';
-    if (seconds < 60) return `${seconds}s`;
-    if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+    if (seconds < 60) return `${seconds}s ago`;
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
     if (seconds < 86400) {
         const h = Math.floor(seconds / 3600);
         const m = Math.floor((seconds % 3600) / 60);
-        return m > 0 ? `${h}h ${m}m` : `${h}h`;
+        return m > 0 ? `${h}h ${m}m ago` : `${h}h ago`;
     }
-    return `${Math.floor(seconds / 86400)}d`;
+    return `${Math.floor(seconds / 86400)}d ago`;
 }
