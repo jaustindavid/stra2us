@@ -27,7 +27,12 @@ from __future__ import annotations
 
 import threading
 
-from .markdown_render import sanitize_markdown
+# Pre-#2: this imported from a vendored copy at
+# `services/markdown_render.py` because the docker build context
+# couldn't reach `tools/`. Post-#2: the canonical sanitizer
+# from the CLI package is importable directly. One implementation,
+# two callers — the FR's "Markdown blocks" requirement.
+from stra2us_cli.sanitizers.markdown import sanitize_markdown
 
 
 # `(app, publish_hash, block_id) → rendered_html`. Process-local

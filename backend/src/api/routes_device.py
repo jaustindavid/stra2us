@@ -1,10 +1,17 @@
 # Copyright (c) 2026 Austin David — PolyForm Noncommercial 1.0.0
 # See LICENSE in the repo root.
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from pydantic import ValidationError as _PydValidationError
 from core.redis_client import get_redis_client
 from core.security import sign_payload, kvenc_xor, KVENC_EXT_TYPE
 import msgpack
 import yaml
+# `stra2us_cli` is installed into the image's venv via
+# `pip install /tools` (see backend/Dockerfile). Locally, tests
+# add `tools/` to sys.path via conftest.py. Either way, these
+# imports resolve to the same authoritative package.
+from stra2us_cli.catalog import Catalog, CatalogError
+from stra2us_cli.catalog_lint import errors as _lint_errors, lint_catalog
 from .dependencies import verify_device_request, check_acl
 import time
 
@@ -24,7 +31,8 @@ def _is_catalog_yaml_key(key: str) -> bool:
 
 
 def _validate_catalog_yaml_upload(packed_body: bytes) -> None:
-    """Minimum-viable server-side catalog gate (followup #4 from
+    """Server-side catalog gate (followup #4, completed via #2's
+    build-context consolidation in
     `docs/fr_catalog_app_ui_progress.md`).
 
     The CLI's `catalog publish` runs full `stra2us_cli.catalog_lint`
@@ -32,19 +40,26 @@ def _validate_catalog_yaml_upload(packed_body: bytes) -> None:
     CLI — raw-KV-editor mistakes, scripts that POST to /kv/ directly,
     older CLI versions without the lint integration.
 
-    **Minimum-viable scope.** This gate validates *structural*
-    catalog shape (parses as YAML, top-level is a dict, has `app`
-    + `vars`). It does NOT yet run the FR's full lint table
-    (hex colors, font allowlist, asset references, etc). Full
-    integration is followup #2 (build-context consolidation) —
-    once `stra2us_cli` is importable from the backend, swap this
-    minimum gate for `lint_catalog(...)`.
+    Three layers of validation:
 
-    Raises HTTPException(400) on malformed payloads. Catalog
-    publishes that pass this gate but fail the FR's deeper lint
-    rules will still render incorrectly client-side; the renderer's
-    defense-in-depth (re-validation in the theme serializer, the
-    widget renderer's safe defaults, etc.) handles those.
+      1. **YAML / shape** — parses as msgpack-wrapped str, the
+         text parses as YAML, top level is a dict.
+      2. **Pydantic schema** — `Catalog.model_validate` catches
+         type / shape errors per field (e.g. `vars.x.type` not
+         in the closed enum, `theme.primary_color` not a string).
+      3. **FR lint table** — `lint_catalog` runs every rule from
+         `docs/fr_catalog_app_ui.md` (hex color shape, font
+         allowlist, mutually-exclusive hints, markdown size cap,
+         etc). `asset_listing=None` because the server doesn't
+         have the bundle context at upload time — `theme.logo_asset`
+         existence checks are skipped server-side, the CLI's
+         publish path catches those.
+
+    Raises HTTPException(400) with a multi-error detail when lint
+    fails. Catalog publishes that pass this gate are full FR-valid;
+    the renderer's defense-in-depth still applies (theme serializer
+    re-validates colors, etc) but the lint here is the authoritative
+    server-side gate.
     """
     # Body is msgpack-packed by the CLI client.put helper; recover
     # the YAML text first.
@@ -64,8 +79,6 @@ def _validate_catalog_yaml_upload(packed_body: bytes) -> None:
     try:
         doc = yaml.safe_load(text)
     except yaml.YAMLError as e:
-        # Strip newlines from the YAML library's verbose message
-        # so it fits in an HTTP detail line.
         msg = str(e).replace("\n", " ")[:200]
         raise HTTPException(
             status_code=400,
@@ -77,17 +90,36 @@ def _validate_catalog_yaml_upload(packed_body: bytes) -> None:
             detail="catalog upload: top-level must be a mapping "
                    f"(got {type(doc).__name__})",
         )
-    for required in ("app", "vars"):
-        if required not in doc:
-            raise HTTPException(
-                status_code=400,
-                detail=f"catalog upload: missing required top-level "
-                       f"`{required}:` key",
-            )
-    if not isinstance(doc["vars"], dict):
+
+    # Layer 2: pydantic schema (`Catalog.model_validate`).
+    try:
+        cat = Catalog.model_validate(doc)
+    except _PydValidationError as e:
+        # Pydantic's error has loc + msg per error; flatten into
+        # a few field-pointing lines for the HTTP detail.
+        lines = []
+        for err in e.errors()[:5]:  # cap; full set lives in server log
+            loc = ".".join(str(p) for p in err.get("loc", ()))
+            lines.append(f"  {loc}: {err['msg']}")
+        more = "" if len(e.errors()) <= 5 else f"\n  …+{len(e.errors()) - 5} more"
         raise HTTPException(
             status_code=400,
-            detail="catalog upload: `vars:` must be a mapping",
+            detail="catalog upload: schema validation failed:\n"
+                   + "\n".join(lines) + more,
+        )
+
+    # Layer 3: full FR lint table. asset_listing=None — server
+    # doesn't have bundle context; the CLI's publish path
+    # validates `theme.logo_asset` against the actual bundle.
+    issues = lint_catalog(cat, asset_listing=None)
+    errs = _lint_errors(issues)
+    if errs:
+        lines = [f"  {e.path}: {e.message}" for e in errs[:5]]
+        more = "" if len(errs) <= 5 else f"\n  …+{len(errs) - 5} more"
+        raise HTTPException(
+            status_code=400,
+            detail="catalog upload: lint failed:\n"
+                   + "\n".join(lines) + more,
         )
 
 MSGPACK_MT = "application/x-msgpack"

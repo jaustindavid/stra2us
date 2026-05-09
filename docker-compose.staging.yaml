@@ -16,8 +16,11 @@ version: '3.8'
 services:
   stra2us-iot-staging:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      # See docker-compose.yaml header comment — context moved to
+      # repo root in P5 #2 so `tools/stra2us_cli/` joins the build
+      # surface alongside `backend/`.
+      context: .
+      dockerfile: backend/Dockerfile
       args:
         # Pulls in tcpdump/telnet/dig/jq/etc. for in-container
         # troubleshooting. See backend/Dockerfile.

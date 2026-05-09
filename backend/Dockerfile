@@ -31,17 +31,30 @@ RUN if [ "$INCLUDE_DEBUG_TOOLS" = "1" ]; then \
 RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Copy requirements and install Python dependencies into the venv
+# Build context is the repo root (P5 followup #2 in
+# docs/fr_catalog_app_ui_progress.md). Paths in this Dockerfile
+# are now repo-rooted: `backend/...` for the application,
+# `tools/...` for the CLI package.
 WORKDIR /app
-COPY requirements.txt .
+
+# Copy requirements + install backend deps
+COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Install `stra2us_cli` from the local tools/ tree. NOT editable
+# (no `-e`) — the resolved package gets baked into /opt/venv at
+# image-build time, so prod's `./backend:/app` runtime mount
+# doesn't unmount tools/. To pick up a tools/ change in prod,
+# rebuild the image (same as for any non-backend code change).
+COPY tools/ /tools/
+RUN pip install --no-cache-dir /tools
 
 # Create necessary directories for volumes and logs
 RUN mkdir -p /data /var/log/supervisor /var/run/
 
-# Copy the rest of the application
+# Copy the backend application into /app.
 # (Overridden at runtime when the user mounts ./backend:/app)
-COPY . .
+COPY backend/ .
 
 # Expose the single service port
 EXPOSE 8153

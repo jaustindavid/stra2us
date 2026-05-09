@@ -3,8 +3,15 @@ version: '3.8'
 services:
   stra2us-iot:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      # Build context is the repo root so the image can pull in
+      # `tools/stra2us_cli/` alongside `backend/` (P5 followup #2).
+      # Pre-#2 the context was `./backend` and the backend's
+      # markdown sanitizer + catalog model were vendored copies
+      # with a parity test; now `pip install ./tools/` at image
+      # build resolves `stra2us_cli` into the venv directly. See
+      # docs/csp_admin_audit.md and docs/fr_catalog_app_ui_progress.md.
+      context: .
+      dockerfile: backend/Dockerfile
     container_name: stra2us-iot
     ports:
       - "8153:8153"

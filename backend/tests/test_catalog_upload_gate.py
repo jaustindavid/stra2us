@@ -129,11 +129,18 @@ def test_top_level_not_a_dict_rejected():
 
 
 def test_missing_app_key_rejected():
+    """Post-#2 the schema layer (pydantic) catches missing `app:`
+    rather than the bespoke shape check; error message format
+    differs but the rejection behavior is unchanged."""
     body = _packed_yaml({"vars": {"x": {"type": "int"}}})
     with pytest.raises(HTTPException) as exc:
         _validate_catalog_yaml_upload(body)
     assert exc.value.status_code == 400
-    assert "`app:`" in exc.value.detail
+    assert "app" in exc.value.detail.lower()
+    # The error wraps from "schema validation failed" or similar;
+    # don't pin the exact wording, just confirm we routed via the
+    # schema path.
+    assert "schema validation failed" in exc.value.detail
 
 
 def test_missing_vars_key_rejected():
@@ -141,7 +148,8 @@ def test_missing_vars_key_rejected():
     with pytest.raises(HTTPException) as exc:
         _validate_catalog_yaml_upload(body)
     assert exc.value.status_code == 400
-    assert "`vars:`" in exc.value.detail
+    assert "vars" in exc.value.detail.lower()
+    assert "schema validation failed" in exc.value.detail
 
 
 def test_vars_not_a_dict_rejected():
@@ -151,4 +159,129 @@ def test_vars_not_a_dict_rejected():
     with pytest.raises(HTTPException) as exc:
         _validate_catalog_yaml_upload(body)
     assert exc.value.status_code == 400
-    assert "`vars:` must be a mapping" in exc.value.detail
+    assert "vars" in exc.value.detail.lower()
+
+
+# ----- post-#2: full lint enforcement at upload -----
+#
+# Pre-#2, the gate only validated *structural* shape. With the
+# build-context consolidation in #2, `stra2us_cli.catalog_lint`
+# is importable from the backend, so the upload path now runs
+# the FR's full lint table — same rules the CLI runs at publish.
+
+def test_bad_theme_color_rejected_at_upload():
+    """`theme.primary_color` must match the hex regex per FR
+    Part 2. A bare keyword like `purple` would have passed the
+    pre-#2 gate (which only checked YAML/dict shape); now it
+    fails with a field-pointing lint error."""
+    body = _packed_yaml({
+        "app": "demo",
+        "theme": {"primary_color": "purple"},
+        "vars": {"x": {"type": "int", "scope": ["app"]}},
+    })
+    with pytest.raises(HTTPException) as exc:
+        _validate_catalog_yaml_upload(body)
+    assert exc.value.status_code == 400
+    assert "theme.primary_color" in exc.value.detail
+    assert "lint failed" in exc.value.detail
+
+
+def test_mutually_exclusive_enum_min_max_rejected_at_upload():
+    """The FR explicitly: numeric `enum` and `min`/`max` are
+    mutually exclusive. Pre-#2 this would have passed the upload
+    (and only failed at render or via the CLI's lint). Now it
+    fails server-side too."""
+    body = _packed_yaml({
+        "app": "demo",
+        "vars": {
+            "n": {
+                "type": "int", "scope": ["app"],
+                "enum": [1, 2, 3], "min": 0, "max": 10,
+            },
+        },
+    })
+    with pytest.raises(HTTPException) as exc:
+        _validate_catalog_yaml_upload(body)
+    assert exc.value.status_code == 400
+    assert "vars.n" in exc.value.detail
+    assert "mutually exclusive" in exc.value.detail
+
+
+def test_disallowed_font_rejected_at_upload():
+    body = _packed_yaml({
+        "app": "demo",
+        "theme": {"font_family": "Comic Sans MS"},
+        "vars": {"x": {"type": "int", "scope": ["app"]}},
+    })
+    with pytest.raises(HTTPException) as exc:
+        _validate_catalog_yaml_upload(body)
+    assert exc.value.status_code == 400
+    assert "theme.font_family" in exc.value.detail
+
+
+def test_oversized_help_markdown_rejected_at_upload():
+    body = _packed_yaml({
+        "app": "demo",
+        "vars": {
+            "s": {
+                "type": "string", "scope": ["app"],
+                "help_markdown": "x" * 5000,
+            },
+        },
+    })
+    with pytest.raises(HTTPException) as exc:
+        _validate_catalog_yaml_upload(body)
+    assert exc.value.status_code == 400
+    assert "help_markdown" in exc.value.detail
+    assert "STRA2US_MARKDOWN_MAX_BYTES" in exc.value.detail
+
+
+def test_logo_asset_existence_check_skipped_server_side():
+    """Server-side lint runs with `asset_listing=None` — there's
+    no bundle context at upload time. The FR's `theme.logo_asset
+    references … but _assets/… not in bundle` rule fires only
+    when a listing is provided. Catalogs that name a logo_asset
+    pass the upload; the CLI's publish path enforces existence."""
+    body = _packed_yaml({
+        "app": "demo",
+        "theme": {"logo_asset": "logo.svg"},
+        "vars": {"x": {"type": "int", "scope": ["app"]}},
+    })
+    # Should NOT raise — asset_listing=None at upload means the
+    # existence check is intentionally skipped.
+    _validate_catalog_yaml_upload(body)
+
+
+def test_critterchron_full_example_passes():
+    """The FR's combined example must pass full server-side
+    lint. Locks in the contract that legitimate catalogs aren't
+    over-rejected."""
+    body = _packed_yaml({
+        "app": "critterchron",
+        "theme": {
+            "primary_color": "#5b3fb8",
+            "accent_color": "#ffb86c",
+            "font_family": "system-ui",
+            "logo_asset": "logo.svg",
+            "logo_alt": "Critterchron",
+            "product_name": "Critterchron",
+        },
+        "ui": {
+            "header_markdown": "## Configure your Critterchron",
+            "footer_markdown": "Critterchron, Inc.",
+        },
+        "vars": {
+            "display_mode": {
+                "type": "string", "scope": ["app", "device"],
+                "label": "Display mode",
+                "enum": ["clock", "weather", "off"],
+            },
+            "ir_brightness": {
+                "type": "int", "scope": ["app", "device"],
+                "label": "Brightness",
+                "min": 0, "max": 100, "widget": "slider",
+            },
+        },
+    })
+    # No exception means it passed all three layers.
+    _validate_catalog_yaml_upload(body)

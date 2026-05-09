@@ -15,7 +15,14 @@ from __future__ import annotations
 
 import pytest
 
-from services import markdown_cache, markdown_render
+# `markdown_render` was a vendored copy of the CLI's sanitizer
+# until P5 followup #2. Now `markdown_cache` imports
+# `sanitize_markdown` from `stra2us_cli.sanitizers.markdown`
+# directly. Tests that monkeypatch the sanitizer patch the
+# *symbol the module imported into its own namespace*, not the
+# canonical source — same shape as the routes_app_assets /
+# routes_app_theme fixtures.
+from services import markdown_cache
 
 
 @pytest.fixture(autouse=True)
@@ -30,7 +37,7 @@ def count_sanitize_calls(monkeypatch):
     """Wrap `sanitize_markdown` to count invocations. Lets tests
     assert "the cache short-circuited the second call."""
     counter = {"n": 0}
-    real = markdown_render.sanitize_markdown
+    real = markdown_cache.sanitize_markdown
 
     def wrapped(source, *, app, max_bytes=None):
         counter["n"] += 1
