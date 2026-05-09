@@ -151,20 +151,23 @@
   work" on a fresh host) but applies to any prod-on-a-new-machine
   recovery scenario.
 
-- **Mobile-friendly customer app page.** The customer-facing
-  `/app/<app>/<device>/...` page is desktop-leaning today (table
-  layouts, smallish touch targets, no viewport meta). Customers
-  configuring a critterchron from their phone deserve a usable
-  experience: viewport meta tag, fluid layout, touch-sized
-  controls (40px+ tap targets), input types that trigger the
-  right mobile keyboards (`type=number`, `type=email`, `type=tel`,
-  etc.), responsive breakpoints. Bundles naturally with the
-  catalog widget + theming work in
-  [`docs/fr_catalog_app_ui.md`](docs/fr_catalog_app_ui.md) since
-  both touch the customer UI surface — could be folded into that
-  FR's implementation pass, or done as a small separate sweep
-  beforehand. Admin UI mobile is a separate (lower-priority)
-  concern; this entry is specifically about the customer surface.
+- **Thorough responsive pass on the admin + customer surfaces.**
+  *(Rescoped 2026-05-09 after a mobile walkthrough.)* The original
+  entry framed the customer page as the priority and called admin
+  mobile "lower-priority"; the actual mobile session inverted that
+  ranking — the customer page (`/app/<app>/<device>/...`) was
+  already perfectly usable (viewport meta + type-aware widgets +
+  16px+ font sizes already shipped in the catalog FR), while the
+  admin shell's fixed-width 260px sidebar dominated the viewport
+  on a phone. v1.6.5 landed a tactical media query that stacks
+  the admin shell column-style at <720px; the urgent mobile
+  pain is closed. What remains here is the longer "thorough
+  responsive pass" — modal sizing on narrow viewports, table
+  overflow handling, breakpoints at 600/900 for tablets, real
+  on-device verification on iOS Safari + Android Chrome
+  (DevTools mobile emulation misses iOS-Safari-specific quirks).
+  Defer until a real on-device pain point surfaces or a future
+  release has bandwidth for a focused half-day.
 
 - **Implement Basic Auth brute-force detection & lockout.** FR is
   in [`docs/fr_basic_auth_lockout.md`](docs/fr_basic_auth_lockout.md).
@@ -223,22 +226,13 @@
   ago"; both callers (`Last seen ${...}` and the activity-row
   `<span class="activity-when">`) dropped their hardcoded " ago".
 
-- **Catalogs view lists asset keys as if they were catalogs.** The
-  Catalogs admin tab calls `/kv_scan?prefix=_catalog/` and renders
-  every returned key as a catalog row. For an app like
-  `critterchron` that means four rows where there should be one:
-  `critterchron` (the real catalog at `_catalog/critterchron`),
-  plus `critterchron/_assets/logo.svg`,
-  `critterchron/_assets_index`, and
-  `critterchron/_assets/logo.svg.meta` — the asset bytes, the
-  asset-index map, and the per-asset metadata, which all live
-  under `_catalog/<app>/_assets/...` (3+ segments under the
-  stash). Fix in `fetchCatalogList()`
-  (`backend/src/static/app.js` ~line 861): filter `items` to keys
-  whose tail past `_catalog/` contains no `/` — i.e., the bare
-  `_catalog/<app>` shape. One-line filter; same predicate that
-  already gates the catalog-vs-assets distinction in
-  `routes_device.py:22-26`.
+- ~~**Catalogs view lists asset keys as if they were catalogs.**~~
+  Landed 2026-05-09 in v1.6.5. `fetchCatalogList()` in
+  `backend/src/static/app.js` now filters the `/kv_scan` results
+  to keys whose tail past `_catalog/` contains no `/` — bare
+  `_catalog/<app>` only. Mirrors the catalog-vs-asset shape rule
+  documented in `routes_device.py:22-26` (catalogs are exactly
+  two segments; 3+ segments are asset payloads).
 
 - **Scoped admins can't see Activity Logs view.** A non-superuser
   admin (e.g. `austin`, ACL has `critterchron/...` prefixes but no

@@ -686,6 +686,74 @@ tr.catalog-var-row:hover td { background: rgba(0, 240, 255, 0.06); }
     color: var(--accent-danger);
 }
 
+/* --- Mobile admin shell (v1.6.5) ----------------------------------
+   Pre-v1.6.5 the admin shell was flex-row with a fixed `width: 260px`
+   sidebar, which leaves ~115px of content on a 375px-wide phone —
+   nearly unusable. This breakpoint stacks the shell column-style:
+   sidebar becomes a compact top bar (logo row + status pill +
+   horizontal-scrolling nav + signout), content area takes the rest
+   of the viewport. Desktop is completely unchanged.
+
+   Breakpoint at 720px is "phone or narrow tablet"; on a regular
+   tablet (768px+) the desktop layout still fits comfortably. */
+@media (max-width: 720px) {
+    .app-container {
+        flex-direction: column;
+        /* `100dvh` (dynamic viewport) accounts for iOS Safari's
+           collapsing address bar; `100vh` is the fallback for
+           browsers without dvh support. Order matters. */
+        height: 100vh;
+        height: 100dvh;
+    }
+    .sidebar {
+        width: 100%;
+        flex: 0 0 auto;       /* size to content; don't grow/shrink */
+        padding: 12px 16px;
+        border-right: none;
+        border-bottom: 1px solid var(--border-light);
+    }
+    .sidebar-header {
+        margin-bottom: 10px;
+    }
+    .sidebar-logo {
+        width: 32px;
+        height: 32px;
+    }
+    .sidebar-header h2 {
+        font-size: 1rem;
+    }
+    .system-status {
+        margin-bottom: 10px;
+        padding: 6px 10px;
+        font-size: 0.75rem;
+    }
+    /* Nav becomes a horizontally-scrolling row. Each link gets a
+       comfortable tap target via the padding bump and stays on
+       one line via `white-space: nowrap`. */
+    .nav-links {
+        display: flex;
+        gap: 6px;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: thin;
+    }
+    .nav-links li {
+        flex: 0 0 auto;
+    }
+    .nav-links li a {
+        margin-bottom: 0;
+        padding: 10px 14px;
+        white-space: nowrap;
+    }
+    .sidebar-footer {
+        margin-top: 8px;
+        padding-top: 8px;
+    }
+    .content-area {
+        padding: 16px;
+    }
+}
+
 /* --- Sidebar sign-out --------------------------------------------- */
 .sidebar { display: flex; flex-direction: column; }
 .sidebar-footer {

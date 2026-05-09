@@ -1609,6 +1609,90 @@ The catalog at `tools/examples/critterchron_v2.s2s.yaml:106-115`
 also lints clean (it has the full triplet on `wifi_password`),
 useful as a larger known-good reference.
 
+### v1.6.5 — Reveal flow + Catalogs filter + admin mobile shell *(2026-05-09)*
+
+Three small, independent fixes bundled because each is
+individually trivial and bundling minimizes deploy/promote
+overhead. Branch off `main`, three commits (one per fix), single
+deploy/promote.
+
+**Reveal-button stays masked after click.** Customer-page bug:
+clicking Reveal on an encrypted-non-write_only password field
+populated the input with the decrypted plaintext but never
+flipped `input.type` from `password` to `text`. Browser kept
+masking the visible characters as dots regardless of value
+content. Fix in `backend/src/static/app/app.js:toggleReveal`:
+two added lines — `input.type = 'text'` on the reveal branch,
+`input.type = 'password'` on the hide branch (the latter is a
+no-op visually since the input was already `type=password`, but
+keeps the toggle symmetric so re-entering the reveal branch
+finds a known starting state).
+
+**Catalogs view lists asset keys as if they were catalogs.**
+Filed during the v1.6.x cycle as TODO #6. The Catalogs admin
+tab called `/kv_scan?prefix=_catalog/` and rendered every key
+as a catalog row, so an app like `critterchron` with one logo
+asset showed up as four rows: the real catalog plus
+`_assets/logo.svg`, `_assets/logo.svg.meta`, and
+`_assets_index`. Fix in `fetchCatalogList()`
+(`backend/src/static/app.js`): filter results to keys whose
+tail past `_catalog/` contains no `/` — bare `_catalog/<app>`
+only. Mirrors the catalog-vs-asset shape rule already documented
+in `routes_device.py:22-26`.
+
+**Admin sidebar dominates the viewport on mobile.** Surfaced
+during a mobile walkthrough that incidentally inverted the
+priority of TODO #3: the customer page was already mobile-fine
+(viewport meta, type-aware widgets, 16px+ fonts all shipped
+in the catalog FR), but the admin shell's `width: 260px`
+fixed sidebar plus flex-row container left only ~115px of
+content on a 375px-wide phone. Added a `@media (max-width:
+720px)` block in `backend/src/static/styles.css` that:
+
+* Switches `.app-container` to `flex-direction: column`.
+* Sets `.sidebar` to `width: 100%`, `flex: 0 0 auto`, swaps
+  `border-right` for `border-bottom` so it reads as a top bar.
+* Compacts the sidebar header (logo 48→32px, h2 1.25→1rem)
+  and the system-status pill (smaller padding, smaller font).
+* Switches `.nav-links` to a horizontal flex row with
+  `overflow-x: auto`; each link gets `white-space: nowrap`
+  so it stays single-line.
+* Bumps `.content-area` padding down (40px 50px → 16px) so
+  it isn't wasting screen real estate.
+
+Uses `100dvh` (with `100vh` fallback) on `.app-container` so
+iOS Safari's collapsing address bar doesn't truncate the bottom
+of the viewport. Desktop layout completely unchanged — the
+media query only fires below 720px, so the regular admin
+experience is byte-for-byte identical.
+
+The TODO entry rescoped accordingly: the urgent mobile pain
+(admin sidebar) is closed; the longer "thorough responsive
+pass" (modal sizing on narrow viewports, table overflow,
+multiple breakpoints, real-device verification) is deferred
+until a real pain point surfaces or a release has bandwidth.
+
+**Tests.** Backend 261/261 unchanged — no backend changes, no
+JS tests for the reveal-toggle or the kv_scan filter (these
+are surfaced visually). The mobile shell is verified by
+DevTools mobile emulation + the operator's own phone walkthrough.
+
+**Rollout.** Three commits on a single branch
+(`v1.6.5-bundle` or similar), individually revertable.
+Verification path:
+
+1. Customer page Reveal: open a `/app/<app>/<device>/...` page
+   with a non-write_only encrypted field, click Reveal, confirm
+   plaintext is visible (not dots). Click Hide, confirm masking
+   returns.
+2. Catalogs admin tab with an app that has assets: confirm
+   exactly one row per app, not N+1. Open a catalog, confirm
+   the assets are still listed in the detail pane (filter only
+   affects the list view, not the detail).
+3. Admin shell on a phone (or DevTools < 720px): confirm the
+   sidebar is a top bar, nav-links scroll horizontally, content
+   gets the rest of the viewport.
+
 ### What's left
 
 Nothing on the catalog-app-ui FR's followup list. The
