@@ -1,0 +1,28 @@
+# Backend dev / test dependencies. Production builds use only
+# `requirements.txt`; this file holds tools that pytest needs
+# but a running container does not. P5 followup #3 in
+# `docs/fr_catalog_app_ui_progress.md` introduced the
+# Playwright-driven E2E suite for the touched-state JS module.
+#
+# Local install:
+#     pip install -r requirements-dev.txt
+#     playwright install chromium
+#
+# CI: pin via this file + a `playwright install --with-deps
+# chromium` step before the test job. The browser binaries
+# download is ~100 MB; cache the
+# `~/.cache/ms-playwright/` directory between CI runs to skip
+# re-downloads on cache hits.
+#
+# Tests gracefully skip when Playwright isn't installed —
+# `tests/test_touched_state_e2e.py` uses `pytest.importorskip`
+# at the top so a fresh checkout that runs `pytest` without the
+# dev deps gets `SKIPPED` lines, not failures. CI can decide
+# whether the skip is acceptable.
+
+# E2E browser-driving toolkit. The Python sync API is the small,
+# pytest-shaped subset we use; pytest-playwright adds the
+# `playwright` marker + `--browser` flag for completeness even
+# though our own fixtures don't currently rely on them.
+playwright>=1.40
+pytest-playwright>=0.5

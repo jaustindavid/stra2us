@@ -1142,3 +1142,223 @@ Total: **234 backend + 168 tools tests** vs the pre-FR
 baseline of admin tests only. Six progress entries above
 record what landed, where it deviated, and what the next
 operator picking up an adjacent piece should know.
+
+---
+
+## Followups *(landed 2026-05-08 → 2026-05-09)*
+
+After the six FR phases signed off, the operator picked up the
+seven followup items recorded in the per-phase "Items deferred"
+sections and worked through them top-to-bottom. All seven landed.
+This section records what changed; the per-phase deferred-items
+lists above are the historical record of what was outstanding at
+each phase's sign-off.
+
+**Test totals at end of followup work:**
+* Backend: **261** (was 234 at FR sign-off; +27)
+* Tools: **169** (was 168; +1)
+
+### Items 5 / 6 / 7 (small)
+
+* **#5 — `tools/stage` deploy note.** One-line addition to the
+  script's `--help` block: when staging hasn't checked out the
+  branch locally, the operator must pass the fully-qualified
+  remote ref (`origin/<branch>`) instead of the bare branch name
+  — git's `-B` flag won't auto-DWIM under those conditions.
+* **#6 — FR's combined-example fix + parser hardening.** The
+  FR's `enum: [clock, weather, photo, off]` example tripped
+  YAML 1.1's truthy literal trap (`off` parses as `False`); fix
+  was quoting the literal in the FR text + extending the
+  parser's `_reject_yaml_truthy_enum` validator to also catch
+  the EnumChoice **object form**'s `value: off` (which the
+  original validator missed because it only inspected bare-list
+  entries, not nested dicts). Backed by the new
+  `test_yaml_truthy_enum_value_in_object_form_rejected` test.
+* **#7 — `data-valid` neutral until first input.** Pre-#7 the
+  P0 module set `data-valid` at `init()` time, painting every
+  valid pattern field green-bordered on first paint. The FR's
+  "Validation" section says feedback fires "as the user types"
+  → field stays neutral until the first input event. Removed the
+  initial-set in `forms/touched_state.js`; the structural test
+  suite still passes (assertions are presence-of-substring, not
+  shape-of-when-set), and the post-#3 Playwright suite
+  (`test_pattern_field_neutral_until_first_input`) locks in the
+  new behavior.
+
+### Item 4 — server-side lint at catalog upload (closed via #2)
+
+Originally a small standalone followup; ended up subsumed by
+#2's build-context consolidation because the implementation
+strategy depended on whether `stra2us_cli.catalog_lint` was
+importable from the backend.
+
+The first cut shipped a **minimum-viable shape gate** in
+`routes_device.write_kv` (parses-as-msgpack-string + parses-as-YAML
++ top-level-is-dict + has `app:` + `vars:` keys). Caught the
+worst operator-mistake shapes; deferred FR-table lint until
+the import surface was ready.
+
+After #2 made `stra2us_cli` part of the backend's installed deps,
+the gate upgraded to **three layers**: shape (existing) →
+pydantic schema (`Catalog.model_validate`) → full lint table
+(`lint_catalog`, `asset_listing=None`). Field-pointing error
+messages reach the operator with the exact lint-rule name. Live
+on staging — confirmed via `stra2us put` of deliberately-broken
+catalogs (`enum + min/max`, `primary_color: "purple"`); both
+returned `400` with `lint failed: <path>: <msg>` per the FR.
+
+### Item 1 — admin CSP cleanup + enforcing flip
+
+The biggest item, ran in four sub-stages with a redeploy after
+each:
+
+* **#1a — Self-host CDNs.** `cdn.jsdelivr.net/.../js-yaml` (39 KB)
+  + `fonts.googleapis.com` / `fonts.gstatic.com` Inter font
+  (47 KB woff2 + license + CSS) moved into
+  `backend/src/static/_vendor/`. SHA-256 of vendored js-yaml
+  verified byte-equal to the prior SRI-pinned version. Drops two
+  third-party hosts from the CSP surface.
+* **#1b — Inline `style=` in `index.html` → CSS classes.** ~17
+  occurrences. Eight new utility/named classes
+  (`.mt-sm`/`.mt-md`/`.mb-md`/`.flex-grow`/`.kv-value-row`/
+  `.checkbox-label`/`.checkbox-inline`/`.alert-error-strong`).
+* **#1c — Handlers + template-literal styles.** Bigger than the
+  audit anticipated — turned into ~50 inline `onclick=` /
+  `onchange=` (across `index.html` + `app.js` template
+  literals) **plus** ~21 inline `style=` attributes embedded in
+  `app.js` template literals (the second category wasn't in the
+  audit's count but would have broken under enforcing CSP just
+  the same). All lifted to a single delegated `[data-action]`
+  dispatcher with an `ACTIONS` map + 17 new CSS classes (badge
+  variants, log-cell colors, monitor color palette via `--c`
+  custom property and `color-mix`).
+
+  Two API surface tweaks worth noting: `_logStatusColor()` →
+  `_logStatusClass()` (returns class name, not color string);
+  `_formatValueCell(value, encrypted, inClickableRow)` →
+  `_formatValueCell(value, encrypted)` (the row-vs-button
+  distinction is unnecessary under delegation — `closest()`
+  naturally picks the inner button when clicked, no
+  `event.stopPropagation()` needed).
+
+* **#1d — Flip + `Cache-Control: no-cache` on admin static.**
+  The flip itself was a single argument change in `main.py`:
+  `CSPMiddleware(enforce_default=True)`. Discovered during the
+  walkthrough that the admin's static `app.js` / `index.html`
+  weren't getting `Cache-Control` headers, so an operator
+  redeploying would see CSP violations from cached pre-#1c
+  bytes until they manually Shift-Reloaded. Added an
+  `admin_cache_control_middleware` that sets `no-cache` on
+  `/admin/*` responses. Same shape of fix as P4's `no-store` on
+  the customer page; different value because admin is static-
+  shell and benefits from 304-revalidate.
+
+### Item 2 — build-context consolidation
+
+Switched docker-compose's build context from `./backend` to the
+repo root so `tools/stra2us_cli/` joins `backend/` in the build
+surface. New `.dockerignore` keeps the wider context tight
+(excludes `redis_data/`, `**/venv/`, docs, etc).
+
+Dockerfile installs `stra2us_cli` non-editably via
+`pip install /tools` — the resolved package gets baked into
+`/opt/venv` at image-build time so prod's `./backend:/app`
+runtime mount doesn't unmount tools/. To pick up a tools/ change
+in prod, rebuild the image (same as for any non-backend code
+change).
+
+What this enabled:
+
+* **Dropped the vendored `markdown_render.py`** and its
+  `test_markdown_render_parity.py` (18 tests). Backend now
+  imports `sanitize_markdown` from `stra2us_cli.sanitizers.markdown`
+  directly — one implementation, two callers, the FR's original
+  intent.
+* **Closed #4** (full lint at catalog upload) by making
+  `stra2us_cli.catalog` + `catalog_lint` importable from the
+  backend. Layer 2 (pydantic) + layer 3 (lint) added to
+  `_validate_catalog_yaml_upload`.
+
+`backend/tests/conftest.py` adds `tools/` to `sys.path` so local
+pytest runs without requiring `pip install -e ../tools` at the
+shell level — the image install path is the production resolver,
+the conftest is the local-dev resolver, both point at the same
+module.
+
+`widget_renderer.py` was NOT refactored to take pydantic `Var`
+instead of dict — the dict-based interface was originally a
+workaround but became a deliberate keep-the-backend-decoupled-
+from-CLI-types choice. Documented and left alone.
+
+### Item 3 — Playwright E2E test runtime
+
+15 Playwright tests under
+[`backend/tests/test_touched_state_e2e.py`](../backend/tests/test_touched_state_e2e.py)
+exercising the touched-state JS module in real Chromium against
+the existing `_test_harness.html`:
+
+* dirty flag flips on `input` / `change`
+* `data-valid` neutral until first keystroke (#7 verification)
+* `data-valid` red on invalid pattern, green on valid
+* serialize emits `data-original` when clean
+* serialize emits live value when dirty
+* serialize **omits** clean `write_only` (the marquee P4 fix)
+* serialize includes touched `write_only`
+* off-spec slider preserves `data-original` across clean submit
+* dirty slider emits the live value (snap-on-edit)
+* radio group serialization (clean + dirty)
+
+Structural-only JS testing remains in place
+(`test_touched_state_js.py` + `test_app_js_p4_wiring.py`) — same
+file, faster feedback, narrower coverage. The two tiers complement.
+
+`pytest.importorskip` at the top of the E2E module + a try/except
+around `chromium.launch()` mean the suite cleanly SKIPs when the
+deps aren't available. New `backend/requirements-dev.txt`
+documents the install path (`pip install -r requirements-dev.txt
+&& playwright install chromium`) for fresh checkouts.
+
+### Three diagnostic gotchas filed during followup work
+
+Carried over to `TODO.md` rather than fixed in this pass:
+
+1. **Intermittent OAuth "session expired or was forged"** —
+   pre-existing; surfaced more by the high reload volume during
+   walkthroughs. Filed with three suspected causes + recommended
+   instrumentation.
+2. **Monitor tab "Clear" button repopulates seconds later** —
+   `monitorClear` resets both the DOM and `monitorSeenIds`, so
+   the next polling fetch repopulates. Pre-existing; not a #1c
+   regression. Five-line fix waiting.
+3. **Browser cache + `<script src="...?v=N">` query strings** —
+   the admin `index.html` references `app.js?v=18`. Operators
+   sometimes forget to bump the version after editing app.js,
+   leading to stale-cache surprises. The `Cache-Control: no-cache`
+   from #1d closes this for `/admin/*`, but the version-bump
+   discipline still matters for explicit cache-buster behavior.
+   Filed informally in `csp_admin_audit.md`.
+
+### What's left
+
+Nothing on the catalog-app-ui FR's followup list. The
+six original FR phase deliverables shipped; the seven
+post-sign-off polish items shipped. The doc set
+([FR](fr_catalog_app_ui.md), [plan](fr_catalog_app_ui_plan.md),
+this progress log, [admin CSP audit](csp_admin_audit.md))
+captures what was built, what was deferred, and the
+operational lessons.
+
+The two prod-side considerations the next person should know:
+
+* The `docker-compose.yaml` build context shift (#2) reaches
+  prod at the next `tools/stage promote <tag>`. Prod's
+  `$PROD_DIR` clone needs the full repo (`backend/` +
+  `tools/`); it does already, but the first rebuild after promote
+  is the moment that becomes load-bearing.
+* The admin CSP enforcing flip (#1d) is live on staging but
+  also reaches prod at promote-time. Browser console after the
+  first prod deploy is the truth — anything that auto-injects
+  scripts at the prod CF zone (Web Analytics, Bot Fight Mode,
+  Email Address Obfuscation) might fire violations the staging
+  zone didn't, depending on which features are zone-level
+  enabled vs subdomain-scoped.
