@@ -98,6 +98,23 @@ def test_inter_css_references_local_url_only():
     assert any("/admin/_vendor/inter/inter-latin.woff2" in ref for ref in url_refs)
 
 
+def test_no_inline_style_attributes():
+    """P5 #1b lifted ~17 inline `style=` attributes to CSS classes
+    (utility + named) so `style-src 'self'` (without
+    'unsafe-inline') won't break the admin layout once admin
+    flips to enforcing. Regression-locking: a future change that
+    re-introduces an inline style fails this test loudly so the
+    operator notices BEFORE deploy."""
+    import re as _re
+    for path in _admin_html_files():
+        src = _read(path)
+        offenders = _re.findall(r'style=["\'][^"\']+["\']', src)
+        assert not offenders, (
+            f"{os.path.basename(path)} has inline style: "
+            f"{offenders[:3]}{'…' if len(offenders) > 3 else ''}"
+        )
+
+
 def test_index_html_references_vendored_paths():
     """The vendored files only matter if index.html actually
     points at them."""

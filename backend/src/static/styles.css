@@ -772,3 +772,70 @@ tr.catalog-var-row:hover td { background: rgba(0, 240, 255, 0.06); }
     font-size: 0.8rem;
     font-family: ui-monospace, monospace;
 }
+
+/* =====================================================================
+   P5 #1b — utility + named classes lifted from inline `style=`
+   attributes in `index.html`. Goal: keep the admin UI's visual exactly
+   the same while removing inline styles so a future
+   `style-src 'self'` (without `'unsafe-inline'`) flip doesn't break
+   anything. See `docs/csp_admin_audit.md`.
+
+   Style philosophy: prefer NAMED classes for compound rules
+   (`.kv-value-row`, `.checkbox-label`) so a future maintainer can
+   tell what the rule is *for*; use small utility classes only for
+   true one-shot spacing/sizing tweaks (`.mt-sm`, `.flex-grow`).
+   ===================================================================== */
+
+/* Vertical spacing utilities — match the inline `margin-top` /
+   `margin-bottom` values that were sprinkled across the admin
+   layout. The two scales used in practice were 12px and 16px,
+   so two utilities cover everything. */
+.mt-sm { margin-top: 12px; }
+.mt-md { margin-top: 16px; }
+.mb-md { margin-bottom: 16px; }
+
+/* Flex-fill — used in input rows where one input should expand
+   to occupy remaining width. */
+.flex-grow { flex: 1; }
+
+/* KV-value editor's value-row layout. Used in the KV modal where
+   the value input + Reveal button sit side-by-side. */
+.kv-value-row {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+}
+
+/* Checkbox + label as a clickable row (the encrypted-flag checkbox
+   in the KV modal, etc). The cursor: pointer makes the label
+   itself the click target — clicking the text toggles the box. */
+.checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+}
+
+/* Inline checkbox sizing — the global `input` rule gives most
+   inputs `width: 100%`; checkboxes need to opt out so they don't
+   stretch to fill the row. */
+.checkbox-inline {
+    width: auto;
+    margin: 0;
+}
+
+/* Strong-error color variant for the alert layout. Pair with
+   `.alert-success` (the base alert layout — padding/border/
+   font/etc, despite its color-laden name) for the full effect:
+   `<div class="alert-success alert-error-strong">` gives a
+   red-background alert with the standard alert geometry.
+   Used when a catalog detail panel surfaces a hard failure.
+
+   Source-order matters: this rule MUST come after
+   `.alert-success` so the cascade overrides bg + color
+   correctly. (`!important` would also work but is overkill
+   here.) */
+.alert-error-strong {
+    background: var(--accent-danger);
+    color: #fff;
+}

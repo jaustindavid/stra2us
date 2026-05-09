@@ -84,22 +84,21 @@
                     <div class="modal-content glass-panel modal-content-sm">
                         <span class="close-btn" onclick="closeKvModal()">&times;</span>
                         <h3 id="kvModalTitle">Add KV Pair</h3>
-                        <div class="input-group" style="margin-top: 16px;">
+                        <div class="input-group mt-md">
                             <label class="form-label">Key Path</label>
                             <input type="text" id="kvKeyInput" placeholder="e.g. coaticlock/min_brightness">
                         </div>
-                        <div class="input-group" style="margin-top: 12px;">
+                        <div class="input-group mt-sm">
                             <label class="form-label">Value (Number, Float, or String)</label>
-                            <div style="display:flex;gap:8px;align-items:flex-start;">
-                                <input type="text" id="kvValueInput" placeholder="e.g. 0.1" style="flex:1;">
-                                <button class="btn-sm" type="button" id="kvRevealBtn"
-                                        style="display:none;"
+                            <div class="kv-value-row">
+                                <input type="text" id="kvValueInput" placeholder="e.g. 0.1" class="flex-grow">
+                                <button class="btn-sm hidden" type="button" id="kvRevealBtn"
                                         onclick="_toggleReveal('kvValueInput', this)">Reveal</button>
                             </div>
                         </div>
-                        <div class="input-group" style="margin-top: 12px;">
-                            <label class="form-label" style="display:flex;align-items:center;gap:8px;cursor:pointer;">
-                                <input type="checkbox" id="kvEncryptedInput" style="width:auto;margin:0;">
+                        <div class="input-group mt-sm">
+                            <label class="form-label checkbox-label">
+                                <input type="checkbox" id="kvEncryptedInput" class="checkbox-inline">
                                 <span>Encrypted &mdash; device GETs return ciphertext (msgpack ext 0x21)</span>
                             </label>
                         </div>
@@ -183,13 +182,13 @@
                     <div id="aclPermissionsList" class="acl-permissions-list"></div>
 
                     <div class="acl-add-row">
-                        <input type="text" id="aclNewPrefix" placeholder="Prefix (e.g. coaticlock)" style="flex:1;">
+                        <input type="text" id="aclNewPrefix" placeholder="Prefix (e.g. coaticlock)" class="flex-grow">
                         <button class="acl-access-toggle access-rw" id="aclNewAccessToggle" onclick="toggleNewAccess()">rw</button>
                         <button class="btn-sm" onclick="aclAddRule()">+ Add Rule</button>
                         <!-- Shown only when editing an admin user's ACL. Lets the operator
                              pick devices instead of typing prefixes — see Phase 5b. -->
-                        <button class="btn-sm" id="aclSelectDevicesBtn"
-                                onclick="openDevicePicker()" style="display:none;">+ Select Devices</button>
+                        <button class="btn-sm hidden" id="aclSelectDevicesBtn"
+                                onclick="openDevicePicker()">+ Select Devices</button>
                     </div>
                     <p class="form-hint-sm">
                         Use prefix <code>*</code> with <code>rw</code> for unrestricted admin access.
@@ -199,7 +198,7 @@
                          whose ACL covers this device's <app>/<client_id> namespace.
                          Each name is clickable: closes this modal and opens the
                          per-user ACL editor. Read-only relationship view. -->
-                    <div id="aclModalAdminsSection" class="acl-admins-section" style="display:none;">
+                    <div id="aclModalAdminsSection" class="acl-admins-section hidden">
                         <h4>Admin users with access</h4>
                         <ul id="aclModalAdminsList" class="acl-admins-list"></ul>
                     </div>
@@ -286,11 +285,11 @@
 
                 <!-- Detail state: shown when an app is selected -->
                 <div id="catalogDetailPane" class="hidden">
-                    <div class="card-toolbar" style="margin-bottom: 16px;">
+                    <div class="card-toolbar mb-md">
                         <button class="btn-ghost" onclick="closeCatalogDetail()">&larr; Back to app list</button>
                         <span class="card-toolbar-title" id="catalogDetailTitle"></span>
                     </div>
-                    <div id="catalogDetailError" class="hidden alert-success" style="background: var(--accent-danger); color: white;"></div>
+                    <div id="catalogDetailError" class="hidden alert-success alert-error-strong"></div>
 
                     <nav class="catalog-tabs" id="catalogTabs">
                         <button class="catalog-tab active" data-tab="variables" onclick="switchCatalogTab('variables')">Variables</button>
@@ -327,7 +326,7 @@
                         </div>
                         <!-- Device detail state: effective-config table -->
                         <div id="catalogDeviceDetailPane" class="hidden">
-                            <div class="card-toolbar" style="margin-bottom: 16px;">
+                            <div class="card-toolbar mb-md">
                                 <button class="btn-ghost" onclick="closeDeviceDetail()">&larr; Back to device list</button>
                                 <span class="card-toolbar-title" id="catalogDeviceDetailTitle"></span>
                             </div>
@@ -353,7 +352,7 @@
                         <div class="card glass-panel form-card">
                             <h3>Raw KV under <code id="catalogRawAppLabel"></code> <span id="catalogRawCount" class="badge">0</span></h3>
                             <p class="form-hint">Every key written under this app's prefix, catalog-tracked or not. Off-catalog keys (drift) are flagged &mdash; the firmware can still read them, but they bypass the catalog contract. Read-only; edits go through the Variables tab so invariants stay intact.</p>
-                            <div class="card card-flush" style="margin-top: 12px;">
+                            <div class="card card-flush mt-sm">
                                 <table class="data-table" id="catalogRawTable">
                                     <thead>
                                         <tr>
@@ -395,7 +394,7 @@
                 <div class="card glass-panel form-card monitor-controls">
                     <input type="text" id="monitorTopic" class="monitor-topic-input" placeholder="Topic name (e.g. coaticlock)">
                     <button id="monitorStartBtn" class="primary-btn" onclick="monitorStart()">&#9654; Watch</button>
-                    <button id="monitorStopBtn" class="primary-btn btn-danger" onclick="monitorStop()" style="display:none;">&#9632; Stop</button>
+                    <button id="monitorStopBtn" class="primary-btn btn-danger hidden" onclick="monitorStop()">&#9632; Stop</button>
                     <div id="monitorStatus" class="monitor-status-off">Idle</div>
                 </div>
 
@@ -463,7 +462,7 @@
                         <label for="forceRestore" class="form-hint">Force Overwrite (replace existing clients)</label>
                     </div>
                     <button class="primary-btn btn-danger-gradient" onclick="uploadRestore()">&#8657; Restore Backup</button>
-                    <div id="restoreResult" class="hidden alert-success" style="margin-top:16px;"></div>
+                    <div id="restoreResult" class="hidden alert-success mt-md"></div>
                 </div>
             </section>
         </main>
