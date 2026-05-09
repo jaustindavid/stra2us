@@ -226,6 +226,47 @@
   ago"; both callers (`Last seen ${...}` and the activity-row
   `<span class="activity-when">`) dropped their hardcoded " ago".
 
+- **Customer app page 404s on `/favicon.ico`.** Browsers
+  speculatively request `/favicon.ico` from the page's origin;
+  the customer app serves none, so the console shows a 404
+  (cosmetic but noisy, and operators reading the console for
+  real errors get false-positive noise). Two-part fix to match
+  the catalog-driven theming intent:
+  1. **Per-app favicon from the catalog.** If the catalog
+     declares one (parallel to `theme.logo_asset` — maybe
+     `theme.favicon_asset`), serve that for `/favicon.ico` (or
+     more correctly, emit `<link rel="icon" href="/app/<app>/_assets/<file>">`
+     in `device.html` / `landing.html`). Means the customer's
+     browser tab + bookmark icon match the product brand.
+  2. **Default fallback.** When no catalog favicon is set,
+     serve a default Stra2us icon (or a 1x1 transparent
+     PNG so the browser's request still resolves to a 200).
+     Either ship a default `favicon.ico` at `/app/_static/`
+     and emit the `<link rel="icon">` unconditionally pointing
+     to it (catalog favicon overrides), or wire a route that
+     redirects /favicon.ico to the right asset. Either ends
+     the 404 noise.
+  Small scope (~30 lines), pairs naturally with the existing
+  `theme.logo_asset` work in the catalog FR.
+
+- **`lookup_device` doesn't find provisioned-but-unwritten devices.**
+  `provision_device` (`backend/src/api/routes_admin.py:193`) creates
+  the device's HMAC secret + ACL but writes zero KV records.
+  `lookup_device` (`backend/src/api/routes_app.py:208`) establishes
+  "device exists" by scanning `kv:*/<name>/*` — so a device that's
+  been provisioned but hasn't done its first KV write yet
+  (no heartbeat, no admin-side `stra2us set`) returns 404 from the
+  customer landing form's name lookup. Workaround for now: write
+  any KV value through admin UI / CLI to make the device
+  discoverable.
+
+  Fix: write a `device_to_app:<client_id>` reverse index at
+  provision time (already foreshadowed in `lookup_device`'s
+  docstring as the perf fix for scan-on-demand). `lookup_device`
+  consults the reverse index first (O(1)), falls back to KV scan
+  for legacy devices provisioned before the fix. Both bugs (this
+  one + the perf concern) close in one change. ~30 lines + tests.
+
 - **`stra2us set` should honor the catalog's `encrypted:` field,
   not the `--encrypted` CLI flag.** Today the CLI's catalog-aware
   write path (`cmd_set` in `tools/stra2us_cli/cli.py:581`) passes
