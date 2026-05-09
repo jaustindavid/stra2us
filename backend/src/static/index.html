@@ -5,7 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Stra2us</title>
     <link rel="icon" type="image/png" href="favicon.png">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <!-- Self-hosted Inter font — vendored from Google Fonts, see
+         _vendor/inter/inter.css. Drops the `fonts.googleapis.com`
+         + `fonts.gstatic.com` CDN references that would otherwise
+         require allowlisting in `style-src` + `font-src` once
+         admin flips to enforcing CSP (P5 followup #1d). -->
+    <link rel="stylesheet" href="_vendor/inter/inter.css?v=1">
     <link rel="stylesheet" href="styles.css?v=2">
 </head>
 <body>
@@ -464,12 +469,14 @@
         </main>
     </div>
 
-    <!-- js-yaml for parsing stashed catalog YAML client-side. ~40 KB gz.
-         Pinned to 4.1.0; served from jsdelivr with SRI so the admin UI
-         can't be silently upgraded from under us. -->
-    <script src="https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js"
-            integrity="sha256-Rdw90D3AegZwWiwpibjH9wkBPwS9U4bjJ51ORH8H69c="
-            crossorigin="anonymous"></script>
+    <!-- js-yaml 4.1.0, self-hosted under _vendor/. Same bytes as the
+         former cdn.jsdelivr.net script (verified at vendor time:
+         sha256 matches the prior SRI). Drops a third-party
+         script-src that strict CSP would otherwise reject; pinned
+         version means the admin UI can't be silently upgraded
+         from under us. To rev: replace the file in _vendor/ + bump
+         the ?v= cache-buster. -->
+    <script src="_vendor/js-yaml-4.1.0.min.js"></script>
     <script src="app.js?v=18"></script>
 </body>
 </html>

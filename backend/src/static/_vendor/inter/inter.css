@@ -1,0 +1,52 @@
+/* Self-hosted Inter font — vendored 2026-05-08 from Google Fonts'
+ * css2 endpoint at family=Inter:wght@400;500;600. The latin subset
+ * woff2 is byte-identical across the three weights (Google ships
+ * Inter as a variable font with the wght axis interpolating
+ * 400→600); we vendor that one file and reference it from three
+ * @font-face rules so the browser's font-weight matching works
+ * the same way it did when the CSS was loaded from Google.
+ *
+ * Why vendored: the admin UI needs CSP-clean asset loading for
+ * P5's enforcing flip. `style-src 'self'` blocks
+ * `fonts.googleapis.com`; `font-src 'self'` blocks
+ * `fonts.gstatic.com`. Self-hosting drops both third-party hosts
+ * from the script/style/font surface.
+ *
+ * License: SIL Open Font License 1.1 — see `OFL.txt` next to
+ * this file. The license requires that we ship the license text
+ * with the font; it does not require attribution in HTML.
+ *
+ * Subsetting: latin only. The admin UI is English; the other
+ * subsets Google Fonts emits (cyrillic, greek, vietnamese,
+ * latin-ext, etc.) aren't useful here. If multilingual support
+ * ever lands, vendor the additional subsets per the same shape
+ * (one woff2 per subset; the @font-face rules fan out by
+ * unicode-range).
+ */
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(/admin/_vendor/inter/inter-latin.woff2) format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(/admin/_vendor/inter/inter-latin.woff2) format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(/admin/_vendor/inter/inter-latin.woff2) format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}

@@ -2,6 +2,32 @@
 
 ## Near-term
 
+- **Intermittent "Sign-in session expired or was forged."**
+  Observed 2026-05-08 during the catalog-app-ui FR walkthroughs.
+  Loading `/app/<app>/<device>` *sometimes* kicks to the OAuth
+  callback's CSRF-mismatch error page; hard refresh + re-auth
+  recovers cleanly. Source: `backend/src/api/routes_oauth.py:118`
+  (state-cookie verify). Reproduced sporadically across multiple
+  page-reload bursts. Pre-existing OAuth-flow code, surfaced by
+  the high reload volume during walkthroughs — not introduced by
+  the FR.
+
+  Most likely causes (ordered by suspicion):
+  1. Multiple tabs racing OAuth flows — a fresh flow's state
+     cookie overwrites the prior tab's; the prior tab's callback
+     sees a mismatch.
+  2. Stale tab + short-lived state cookie expiring while the
+     tab sits idle.
+  3. `samesite=lax` cross-redirect dropping the cookie on some
+     edge-Cloudflare path.
+
+  Action: instrument the callback to log which case we hit
+  (cookie missing vs. cookie present-but-mismatched), then
+  decide whether to extend the state cookie's lifetime, scope
+  one state cookie per tab via `name=oauth_state_<flow_id>`, or
+  surface a more-recoverable retry path. Not blocking; the
+  recovery (re-auth) takes seconds.
+
 - ~~**Bypass Cloudflare cache for `/admin/*` assets.**~~ Landed
   2026-05-06: CF Cache Rule on the austindavid.com zone with
   expression `http.host contains "stra2us" and starts_with(http.request.uri.path, "/admin/")`
