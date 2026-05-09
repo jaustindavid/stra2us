@@ -97,9 +97,9 @@ async function fetchStats() {
         <div class="data-item">
             <div><strong>${t}</strong> (Msg Count: ${q.count})</div>
             <div>
-                <button class="btn-sm" onclick="peekData('q', '${t}')">Peek</button>
-                <button class="btn-sm" onclick="openMonitor('${t}')">Monitor</button>
-                <button class="btn-sm danger" onclick="deleteData('q', '${t}')">Delete</button>
+                <button class="btn-sm" data-action="peekData" data-kind="q" data-target="${t}">Peek</button>
+                <button class="btn-sm" data-action="openMonitor" data-target="${t}">Monitor</button>
+                <button class="btn-sm danger" data-action="deleteData" data-kind="q" data-target="${t}">Delete</button>
             </div>
         </div>
     `}).join('') || '<div class="text-muted">No active queues</div>';
@@ -112,15 +112,15 @@ async function fetchStats() {
         // can tell at a glance which values are confidential. The flag comes
         // from the server's per-record sidecar, surfaced in /stats.
         const encBadge = k.encrypted
-            ? ' <span class="badge" style="background:rgba(138,43,226,0.15);color:var(--accent-purple);border:1px solid var(--accent-purple);font-size:0.7rem;" title="Encrypted on the wire to devices">🔒 encrypted</span>'
+            ? ' <span class="badge badge-encrypted" title="Encrypted on the wire to devices">🔒 encrypted</span>'
             : '';
         return `
         <div class="data-item">
             <div><strong>${key}</strong>${encBadge}</div>
             <div>
-                <button class="btn-sm" onclick="editData('kv', '${key}')">Edit</button>
-                <button class="btn-sm" onclick="peekData('kv', '${key}')">Read</button>
-                <button class="btn-sm danger" onclick="deleteData('kv', '${key}')">Delete</button>
+                <button class="btn-sm" data-action="editData" data-kind="kv" data-target="${key}">Edit</button>
+                <button class="btn-sm" data-action="peekData" data-kind="kv" data-target="${key}">Read</button>
+                <button class="btn-sm danger" data-action="deleteData" data-kind="kv" data-target="${key}">Delete</button>
             </div>
         </div>
     `}).join('') || '<div class="text-muted">No active KV pairs</div>';
@@ -231,7 +231,7 @@ let allClientsData = {};
 function formatAclSummary(acl) {
     const perms = acl.permissions || [];
     if (perms.length === 0)
-        return '<span class="badge" style="background:var(--accent-danger);color:#fff;">No Access</span>';
+        return '<span class="badge badge-no-access">No Access</span>';
     // `display:inline-block` makes each badge atomic (the wrap engine
     // can't split the prefix from the `: rw` mid-badge); `.join(' ')`
     // gives the wrap engine actual whitespace to break on between
@@ -240,11 +240,9 @@ function formatAclSummary(acl) {
     // `.join('')` + `&thinsp;` shape that wrapped poorly when a user
     // had several device-scope grants.
     return perms.map(p =>
-        `<span class="badge" style="display:inline-block; white-space:nowrap; margin:2px 4px 2px 0;
-               background:${p.access==='rw' ? 'rgba(0,240,255,0.15)' : 'rgba(138,43,226,0.15)'};
-               color:${p.access==='rw' ? 'var(--accent-blue)' : 'var(--accent-purple)'};
-               border:1px solid ${p.access==='rw' ? 'var(--accent-blue)' : 'var(--accent-purple)'};
-               font-size:0.75rem;">${escapeHtml(p.prefix)} : ${escapeHtml(p.access)}</span>`
+        `<span class="badge badge-acl-prefix badge-acl-${p.access==='rw' ? 'rw' : 'r'}">` +
+            `${escapeHtml(p.prefix)} : ${escapeHtml(p.access)}` +
+        `</span>`
     ).join(' ');
 }
 
@@ -261,9 +259,9 @@ async function fetchKeys() {
         <tr>
             <td><strong>${id}</strong></td>
             <td>${formatAclSummary(c.acl)}</td>
-            <td style="white-space:nowrap;">
-                <button class="btn-sm" onclick="openAclModal('${id}')">Edit ACL</button>
-                <button class="btn-sm danger" onclick="revokeClient('${id}')">Revoke</button>
+            <td class="col-nowrap">
+                <button class="btn-sm" data-action="openAclModal" data-target="${id}">Edit ACL</button>
+                <button class="btn-sm danger" data-action="revokeClient" data-target="${id}">Revoke</button>
             </td>
         </tr>
     `}).join('');
@@ -276,15 +274,15 @@ document.getElementById('keyForm').addEventListener('submit', async (e) => {
 
     const display = document.getElementById('newSecretDisplay');
     if (!ok) {
-        display.innerHTML = `<strong style="color:var(--accent-danger);">Error:</strong> ${res.detail || 'Unknown error'}`;
+        display.innerHTML = `<strong class="text-error">Error:</strong> ${res.detail || 'Unknown error'}`;
         display.classList.remove('hidden');
         return;
     }
     display.innerHTML = `<strong>Success!</strong> Secret key generated.<br><br>
                          Client ID: <code>${res.client_id}</code><br>
                          Key (Hex): <code>${res.secret}</code><br><br>
-                         <small style="color:var(--accent-danger);">Warning: This key will not be displayed again.</small><br><br>
-                         <small style="color:var(--text-muted);">Client has <strong>no access</strong> by default. Click Edit ACL to add permissions.</small>`;
+                         <small class="text-error">Warning: This key will not be displayed again.</small><br><br>
+                         <small class="text-muted">Client has <strong>no access</strong> by default. Click Edit ACL to add permissions.</small>`;
     display.classList.remove('hidden');
     document.getElementById('newClientId').value = '';
     fetchKeys();
@@ -308,7 +306,7 @@ document.getElementById('provisionDeviceForm').addEventListener('submit', async 
     });
 
     if (!ok) {
-        display.innerHTML = `<strong style="color:var(--accent-danger);">Error:</strong> ${escapeHtml(res.detail || 'Unknown error')}`;
+        display.innerHTML = `<strong class="text-error">Error:</strong> ${escapeHtml(res.detail || 'Unknown error')}`;
         display.classList.remove('hidden');
         return;
     }
@@ -324,10 +322,10 @@ document.getElementById('provisionDeviceForm').addEventListener('submit', async 
     if (res.created) {
         header = `<strong>Provisioned!</strong> <code>${escapeHtml(res.client_id)}</code> for app <code>${escapeHtml(app)}</code>.`;
         secretBlock = `<strong>Secret (hex):</strong> <code>${escapeHtml(res.secret)}</code><br>
-                       <small style="color:var(--accent-danger);">Save this now — it won't be shown again.</small>`;
+                       <small class="text-error">Save this now — it won't be shown again.</small>`;
     } else {
         header = `<strong>ACL updated</strong> for existing client <code>${escapeHtml(res.client_id)}</code> on app <code>${escapeHtml(app)}</code>.`;
-        secretBlock = `<small style="color:var(--text-muted);">Existing secret left untouched — the device's authentication is unchanged.</small>`;
+        secretBlock = `<small class="text-muted">Existing secret left untouched — the device's authentication is unchanged.</small>`;
     }
     display.innerHTML = `${header}<br><br>
                          ${secretBlock}<br><br>
@@ -462,7 +460,7 @@ async function openDevicePicker() {
                                     <input type="checkbox"
                                            data-token="${escapeHtml(token)}"
                                            ${already ? 'disabled title="Already in ACL"' : ''}
-                                           onchange="_devicePickerToggle(this)">
+                                           data-change-action="devicePickerToggle">
                                     ${escapeHtml(d)}${already ? ' <span class="text-muted">(already granted)</span>' : ''}
                                 </label>
                             </li>`;
@@ -564,8 +562,8 @@ async function loadAdminsWithAccess(clientId) {
         const uname = escapeHtml(a.username);
         const access = escapeHtml(a.access);
         return `<li>
-            <a href="#" onclick="event.preventDefault(); jumpToAdminUser('${uname}')">${uname}</a>
-            <span class="badge access-${access}" style="margin-left:8px;">${access}</span>
+            <a href="#" data-action="jumpToAdminUser" data-uname="${uname}">${uname}</a>
+            <span class="badge access-${access} badge-spaced">${access}</span>
         </li>`;
     }).join('');
 }
@@ -594,8 +592,8 @@ function renderAclPermissions() {
         <div class="acl-rule-row">
             <span class="acl-prefix-label">${escapeHtml(p.prefix)}</span>
             <button class="acl-access-toggle ${p.access === 'rw' ? 'access-rw' : 'access-r'}"
-                    onclick="aclToggleAccess(${i})">${escapeHtml(p.access)}</button>
-            <button class="btn-sm danger" onclick="aclRemoveRule(${i})">&#x2715;</button>
+                    data-action="aclToggleAccess" data-index="${i}">${escapeHtml(p.access)}</button>
+            <button class="btn-sm danger" data-action="aclRemoveRule" data-index="${i}">&#x2715;</button>
         </div>
     `).join('');
 }
@@ -670,8 +668,8 @@ async function fetchAdminUsers() {
         const uname = escapeHtml(u.username);
         const source = renderSourceBadge(u.source);
         const status = u.provisioned
-            ? '<span class="badge" style="background:rgba(0,255,136,0.12);color:var(--accent-success);border:1px solid rgba(0,255,136,0.3);">provisioned</span>'
-            : '<span class="badge" style="background:rgba(255,170,0,0.12);color:#ffaa00;border:1px solid rgba(255,170,0,0.3);" title="No ACL row in Redis — this user sees no KV. Run migrate_admin_acls.py or edit here.">needs setup</span>';
+            ? '<span class="badge badge-provisioned">provisioned</span>'
+            : '<span class="badge badge-needs-setup" title="No ACL row in Redis — this user sees no KV. Run migrate_admin_acls.py or edit here.">needs setup</span>';
         // Delete is only meaningful for OAuth/acl-only users — the
         // operation removes their admin_acls row. For htpasswd users,
         // deleting the ACL row leaves them able to authenticate but
@@ -680,7 +678,7 @@ async function fetchAdminUsers() {
         // users only to avoid foot-shooting; htpasswd ACL clearing is
         // a deliberate operator action via redis-cli if ever needed.
         const deleteBtn = (u.source === 'oauth' || u.source === 'acl-only')
-            ? `<button class="btn-sm btn-danger" onclick="confirmDeleteAdminUser('${uname}')">Delete</button>`
+            ? `<button class="btn-sm btn-danger" data-action="confirmDeleteAdminUser" data-uname="${uname}">Delete</button>`
             : '';
         return `
             <tr>
@@ -689,7 +687,7 @@ async function fetchAdminUsers() {
                 <td>${formatAclSummary(u.acl)}</td>
                 <td>${status}</td>
                 <td>
-                    <button class="btn-sm" onclick="openAdminAclModalFor('${uname}')">Edit ACL</button>
+                    <button class="btn-sm" data-action="openAdminAclModalFor" data-uname="${uname}">Edit ACL</button>
                     ${deleteBtn}
                 </td>
             </tr>
@@ -703,12 +701,12 @@ function renderSourceBadge(source) {
     // acl-only = orange (no auth path — orphaned row, clean up).
     switch (source) {
         case 'oauth':
-            return '<span class="badge" style="background:rgba(0,240,255,0.12);color:var(--accent-blue);border:1px solid rgba(0,240,255,0.3);" title="Signs in via Google OAuth on the browser hostname">OAuth</span>';
+            return '<span class="badge badge-auth-oauth" title="Signs in via Google OAuth on the browser hostname">OAuth</span>';
         case 'htpasswd':
-            return '<span class="badge" style="background:rgba(138,43,226,0.18);color:#c79bff;border:1px solid rgba(138,43,226,0.3);" title="Signs in via Basic auth on the device hostname (rescue path)">htpasswd</span>';
+            return '<span class="badge badge-auth-htpasswd" title="Signs in via Basic auth on the device hostname (rescue path)">htpasswd</span>';
         case 'acl-only':
         default:
-            return '<span class="badge" style="background:rgba(255,170,0,0.12);color:#ffaa00;border:1px solid rgba(255,170,0,0.3);" title="ACL row exists but no auth path — likely orphaned. Delete or add to htpasswd / OAuth.">acl-only</span>';
+            return '<span class="badge badge-auth-acl-only" title="ACL row exists but no auth path — likely orphaned. Delete or add to htpasswd / OAuth.">acl-only</span>';
     }
 }
 
@@ -841,7 +839,7 @@ async function fetchCatalogList() {
         const app = it.key.startsWith(CATALOG_PREFIX) ? it.key.slice(CATALOG_PREFIX.length) : it.key;
         const kb = (it.bytes / 1024).toFixed(1);
         return `
-            <div class="catalog-app-row" onclick="openCatalogDetail('${escapeHtml(app)}')">
+            <div class="catalog-app-row" data-action="openCatalogDetail" data-app="${escapeHtml(app)}">
                 <span class="catalog-app-name">${escapeHtml(app)}</span>
                 <span class="catalog-app-meta">${kb} KB &middot; <code>${escapeHtml(it.key)}</code></span>
                 <span class="catalog-app-chevron">&rsaquo;</span>
@@ -903,7 +901,7 @@ async function openCatalogDetail(app) {
     const rows = Object.entries(cat.vars).map(([name, v]) => {
         v = v || {};
         return `
-            <tr class="catalog-var-row" onclick="openKeyEditor('${escapeHtml(name)}')">
+            <tr class="catalog-var-row" data-action="openKeyEditor" data-var-name="${escapeHtml(name)}">
                 <td><code>${escapeHtml(name)}</code></td>
                 <td>${escapeHtml(v.type || '?')}</td>
                 <td>${_formatScope(v.scope)}</td>
@@ -995,7 +993,7 @@ async function fetchCatalogDevices() {
     }
 
     listEl.innerHTML = devices.map(dev => `
-        <div class="catalog-app-row" onclick="openDeviceDetail('${escapeHtml(dev)}')">
+        <div class="catalog-app-row" data-action="openDeviceDetail" data-dev="${escapeHtml(dev)}">
             <span class="catalog-app-name">${escapeHtml(dev)}</span>
             <span class="catalog-app-chevron">&rsaquo;</span>
         </div>
@@ -1044,10 +1042,10 @@ async function openDeviceDetail(deviceId) {
         // Resolve effective + source.
         let effHtml, sourceHtml;
         if (devRes.state === 'set') {
-            effHtml = _formatValueCell(devRes.value, devRes.encrypted, true);
+            effHtml = _formatValueCell(devRes.value, devRes.encrypted);
             sourceHtml = `<span class="badge source-device">device</span>`;
         } else if (appRes.state === 'set') {
-            effHtml = _formatValueCell(appRes.value, appRes.encrypted, true);
+            effHtml = _formatValueCell(appRes.value, appRes.encrypted);
             sourceHtml = `<span class="badge source-app">app</span>`;
         } else if (v.default !== undefined && v.default !== null && !v.default_per_device) {
             // Catalog defaults can't be encrypted — they live in the YAML
@@ -1060,7 +1058,7 @@ async function openDeviceDetail(deviceId) {
         }
 
         return `
-            <tr class="catalog-var-row" onclick="openKeyEditorForDevice('${escapeHtml(name)}','${escapeHtml(deviceId)}')">
+            <tr class="catalog-var-row" data-action="openKeyEditorForDevice" data-var-name="${escapeHtml(name)}" data-device-id="${escapeHtml(deviceId)}">
                 <td><code>${escapeHtml(name)}</code></td>
                 <td>${devCell}</td>
                 <td>${appCell}</td>
@@ -1076,7 +1074,7 @@ function _effectiveCell(res) {
     if (res.state === 'na') return `<span class="text-muted">&mdash;</span>`;
     if (res.state === 'unset') return `<span class="text-muted">(unset)</span>`;
     if (res.state === 'error') return `<span class="text-muted">(err)</span>`;
-    return _formatValueCell(res.value, res.encrypted, true);
+    return _formatValueCell(res.value, res.encrypted);
 }
 
 // Open the M3b key editor from a device-effective row, locked to that
@@ -1241,11 +1239,10 @@ function _editControlHtml(scope, varDesc) {
     // decrypt str/bin payloads, so allowing the checkbox on int/bool/enum
     // would be a write-time footgun (the device read would 500 later).
     return `<textarea id="${id}" rows="2" placeholder="new value"></textarea>` +
-           `<button class="btn-sm" type="button" id="reveal_${scope}" ` +
-           `style="display:none;margin-top:4px;" ` +
-           `onclick="_toggleReveal('${id}', this)">Reveal</button>` +
-           `<label style="display:block;margin-top:6px;font-size:0.85rem;cursor:pointer;">` +
-           `<input type="checkbox" id="encrypted_${scope}" style="width:auto;margin-right:6px;">` +
+           `<button class="btn-sm hidden mt-xs" type="button" id="reveal_${scope}" ` +
+           `data-action="toggleReveal" data-target="${id}">Reveal</button>` +
+           `<label class="encrypted-toggle-label">` +
+           `<input type="checkbox" id="encrypted_${scope}" class="encrypted-toggle-checkbox">` +
            `Encrypted &mdash; device GETs return ciphertext (msgpack ext 0x21)` +
            `</label>`;
 }
@@ -1255,15 +1252,22 @@ function _editControlHtml(scope, varDesc) {
 // the device-effectives table). When `encrypted` is true, masks by default
 // with a Reveal button — the same pattern any operator-facing value
 // surface needs so a wifi_password doesn't flash up unprompted while
-// they're clicking around. The `inClickableRow` flag stops button-click
-// propagation so the Reveal doesn't also trigger the row's onclick.
-function _formatValueCell(value, encrypted, inClickableRow) {
+// they're clicking around.
+//
+// Pre-#1c, this took an `inClickableRow` flag to splice
+// `event.stopPropagation();` into the button's inline onclick when the
+// surrounding row had its own click handler. Under #1c's delegated
+// dispatch, that's automatic: the body-level click delegate uses
+// `event.target.closest('[data-action]')`, which returns the BUTTON
+// (not the row) when the click target is the button. The row's
+// data-action only fires when the click hits the row outside any
+// descendant `[data-action]` element. Parameter dropped.
+function _formatValueCell(value, encrypted) {
     const json = JSON.stringify(value);
     if (encrypted) {
         const dots = '•'.repeat(Math.min(json.length, 12));
-        const stop = inClickableRow ? 'event.stopPropagation();' : '';
         return `<code class="reveal-target" data-real="${escapeHtml(json)}">${dots}</code>` +
-               ` <button class="btn-sm" type="button" onclick="${stop}_toggleRevealReadonly(this)">Reveal</button>`;
+               ` <button class="btn-sm" type="button" data-action="toggleRevealReadonly">Reveal</button>`;
     }
     return `<code>${escapeHtml(json)}</code>`;
 }
@@ -1271,7 +1275,7 @@ function _formatValueCell(value, encrypted, inClickableRow) {
 function _renderCurrent(state, value, encrypted) {
     if (state === 'unset') return `<span class="text-muted">(unset)</span>`;
     if (state === 'error') return `<span class="text-muted">(error: ${escapeHtml(String(value))})</span>`;
-    return _formatValueCell(value, encrypted, false);
+    return _formatValueCell(value, encrypted);
 }
 
 async function _fetchScopeValue(app, keyName, device) {
@@ -1384,8 +1388,8 @@ function openKeyEditor(keyName, opts = {}) {
                 <div class="key-editor-current">Current: <span id="currentApp">&hellip;</span></div>
                 <div class="key-editor-edit">
                     ${_editControlHtml('app', v)}
-                    <button class="primary-btn btn-sm" onclick="saveScope('app')">Save</button>
-                    <button class="btn-sm btn-danger" onclick="unsetScope('app')">Unset</button>
+                    <button class="primary-btn btn-sm" data-action="saveScope" data-scope="app">Save</button>
+                    <button class="btn-sm btn-danger" data-action="unsetScope" data-scope="app">Unset</button>
                 </div>
                 <div class="key-editor-error hidden" id="errorApp"></div>
             </div>
@@ -1419,7 +1423,7 @@ function openKeyEditor(keyName, opts = {}) {
                </div>`
             : `<div class="key-editor-device-picker">
                    <input type="text" id="deviceIdInput" placeholder="device id (e.g. ricky)">
-                   <button class="btn-sm" onclick="loadDeviceScope()">Load</button>
+                   <button class="btn-sm" data-action="loadDeviceScope">Load</button>
                </div>`;
         const initialCurrent = lockedDevice
             ? '&hellip;'
@@ -1431,8 +1435,8 @@ function openKeyEditor(keyName, opts = {}) {
                 <div class="key-editor-current">Current: <span id="currentDevice" class="text-muted">${initialCurrent}</span></div>
                 <div class="key-editor-edit ${lockedDevice ? '' : 'hidden'}" id="deviceEditRow">
                     ${_editControlHtml('device', v)}
-                    <button class="primary-btn btn-sm" onclick="saveScope('device')">Save</button>
-                    <button class="btn-sm btn-danger" onclick="unsetScope('device')">Unset</button>
+                    <button class="primary-btn btn-sm" data-action="saveScope" data-scope="device">Save</button>
+                    <button class="btn-sm btn-danger" data-action="unsetScope" data-scope="device">Unset</button>
                 </div>
                 <div class="key-editor-error hidden" id="errorDevice"></div>
             </div>
@@ -1601,27 +1605,33 @@ async function fetchLogs() {
     const tbody = document.getElementById('logsTableBody');
     tbody.innerHTML = logs.map(l => `
         <tr>
-            <td style="color:var(--text-muted);">${formatTime(l.timestamp)}</td>
-            <td style="color:var(--accent-blue);">${escapeHtml(l.client_id)}</td>
+            <td class="col-log-timestamp">${formatTime(l.timestamp)}</td>
+            <td class="col-log-client-id">${escapeHtml(l.client_id)}</td>
             <td>${escapeHtml(l.action)}</td>
-            <td style="color:${_logStatusColor(l.status)}">${escapeHtml(l.status)}</td>
+            <td class="${_logStatusClass(l.status)}">${escapeHtml(l.status)}</td>
         </tr>
     `).join('');
 }
 
-// Color logic for activity log status text. Was a `startsWith('Success')`
-// check; broke when the middleware grew Hit/Miss/Not Modified entries
-// for KV + firmware reads — those start with neither "Success" nor
-// "Error" but are still 200/304s. Now driven by the embedded HTTP
-// status code so any new prefix the middleware grows (e.g. "Cached"
-// for some future caching layer) gets coloured correctly without
-// touching this list.
-function _logStatusColor(s) {
+// Color-class logic for activity log status text. Was a
+// `startsWith('Success')` check; broke when the middleware grew
+// Hit/Miss/Not Modified entries for KV + firmware reads — those
+// start with neither "Success" nor "Error" but are still 200/304s.
+// Now driven by the embedded HTTP status code so any new prefix
+// the middleware grows (e.g. "Cached" for some future caching
+// layer) gets coloured correctly without touching this list.
+//
+// Returns a CSS class name (`.log-status-ok` / `.log-status-err`
+// / `.text-muted`) rather than a `color:` value so the caller can
+// drop it into the `class="..."` attribute. Pre-#1c this returned
+// a CSS color and got spliced into an inline `style=` attr —
+// blocked by `style-src 'self'` once admin flips to enforcing.
+function _logStatusClass(s) {
     const m = (s || '').match(/\((\d{3})\)/);
-    if (!m) return 'var(--text-muted)';      // shape we don't recognize
+    if (!m) return 'text-muted';                  // shape we don't recognize
     const code = parseInt(m[1], 10);
-    if (code >= 200 && code < 400) return 'var(--accent-success)';   // 2xx + 3xx
-    return 'var(--accent-danger)';                                    // 4xx + 5xx
+    if (code >= 200 && code < 400) return 'log-status-ok';
+    return 'log-status-err';
 }
 
 // Polling for real-time updates (every 5 seconds)
@@ -1730,10 +1740,16 @@ function renderMonitorChips() {
     });
 }
 
-function monitorClientColor(clientId) {
-    if (!monitorClientColors[clientId]) {
-        const idx = Object.keys(monitorClientColors).length % MONITOR_COLORS.length;
-        monitorClientColors[clientId] = MONITOR_COLORS[idx];
+function monitorClientColorIndex(clientId) {
+    // Returns the [0, 9] palette index this client is bound to.
+    // Allocated on first sight (round-robin via dict size) and
+    // cached so re-renders are stable. CSS class
+    // `.monitor-color-${idx}` carries the actual color triplet —
+    // see `styles.css` (P5 #1c lifted these out of inline
+    // `style="..."` attributes).
+    if (monitorClientColors[clientId] === undefined) {
+        monitorClientColors[clientId] =
+            Object.keys(monitorClientColors).length % MONITOR_COLORS.length;
     }
     return monitorClientColors[clientId];
 }
@@ -1768,7 +1784,7 @@ async function monitorPoll() {
         monitorSeenIds.add(msg.id);
         addedAny = true;
 
-        const color = monitorClientColor(msg.client_id);
+        const colorIdx = monitorClientColorIndex(msg.client_id);
         const d = new Date(msg.received_at * 1000);
         const ts = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
         const dataStr = monitorFormatData(msg.data);
@@ -1777,7 +1793,7 @@ async function monitorPoll() {
         row.className = 'monitor-row monitor-row-new';
         row.innerHTML = `
             <span class="monitor-ts">${ts}</span>
-            <span class="monitor-badge" style="background:${color}22; color:${color}; border-color:${color}44;">${escapeHtml(msg.client_id)}</span>
+            <span class="monitor-badge monitor-color-${colorIdx}">${escapeHtml(msg.client_id)}</span>
             <span class="monitor-data">${dataStr}</span>
         `;
         // Prepend so newest is at top
@@ -1898,6 +1914,134 @@ async function fetchSecurityWarnings() {
         `;
     }).join('');
 }
+
+// =====================================================================
+// CLICK-DELEGATION FRAMEWORK (P5 #1c)
+//
+// Replaces the ~55 inline `onclick="…"` handlers that the admin UI
+// inherited from a pre-CSP era. A single delegated click listener
+// on `<body>` reads `data-action="<name>"` from the clicked element
+// (or its nearest ancestor) and dispatches via the ACTIONS map
+// below. Handlers receive `(el, event)` where `el` is the
+// `[data-action]` element — usually a `<button>`, `<a>`, `<tr>`, or
+// `<div>`. Handlers read whatever extra data they need from
+// `el.dataset.<name>` (`data-*` attributes on the same element).
+//
+// Why NOT a single map per file or per module: this admin UI is a
+// single page, all globals, all in one app.js. Keeping the
+// dispatch table here keeps it grep-able — `git grep "data-action="`
+// finds every callsite; `git grep "ACTIONS\['<name>'\]"` finds
+// every handler.
+//
+// Row-vs-button: when both a row (e.g. `<tr data-action="openKeyEditor">`)
+// and a button inside it (e.g. `<button data-action="toggleReveal">`)
+// have data-action, clicking the button picks the button (closest()
+// returns the nearest ancestor including target). The row's action
+// only fires when the click hits the row outside any descendant
+// `[data-action]`. No `event.stopPropagation()` needed.
+//
+// One change-event case (checkbox in the device picker) handled
+// separately via `data-change-action` — click delegation alone
+// would risk double-firing for keyboard-toggled checkboxes.
+// =====================================================================
+
+const ACTIONS = {
+    // KV modal
+    openKvModal: () => openKvModal(),
+    closeKvModal: () => closeKvModal(),
+    saveKv: () => saveKv(),
+    toggleReveal: (el) => _toggleReveal(el.dataset.target, el),
+
+    // ACL editor
+    toggleNewAccess: () => toggleNewAccess(),
+    aclAddRule: () => aclAddRule(),
+    aclToggleAccess: (el) => aclToggleAccess(parseInt(el.dataset.index, 10)),
+    aclRemoveRule: (el) => aclRemoveRule(parseInt(el.dataset.index, 10)),
+    openAclModal: (el) => openAclModal(el.dataset.target),
+    closeAclModal: () => closeAclModal(),
+    saveAcl: () => saveAcl(),
+
+    // Device picker (within ACL editor)
+    openDevicePicker: () => openDevicePicker(),
+    closeDevicePicker: () => closeDevicePicker(),
+    confirmDevicePicker: () => confirmDevicePicker(),
+
+    // Catalog views
+    openCatalogDetail: (el) => openCatalogDetail(el.dataset.app),
+    closeCatalogDetail: () => closeCatalogDetail(),
+    switchCatalogTab: (el) => switchCatalogTab(el.dataset.tab),
+    openDeviceDetail: (el) => openDeviceDetail(el.dataset.dev),
+    closeDeviceDetail: () => closeDeviceDetail(),
+    openKeyEditor: (el) => openKeyEditor(el.dataset.varName),
+    openKeyEditorForDevice: (el) =>
+        openKeyEditorForDevice(el.dataset.varName, el.dataset.deviceId),
+    closeKeyEditor: () => closeKeyEditor(),
+    saveScope: (el) => saveScope(el.dataset.scope),
+    unsetScope: (el) => unsetScope(el.dataset.scope),
+    loadDeviceScope: () => loadDeviceScope(),
+    toggleRevealReadonly: (el) => _toggleRevealReadonly(el),
+
+    // KV / Q operations from list rows
+    peekData: (el) => peekData(el.dataset.kind, el.dataset.target),
+    openMonitor: (el) => openMonitor(el.dataset.target),
+    deleteData: (el) => deleteData(el.dataset.kind, el.dataset.target),
+    editData: (el) => editData(el.dataset.kind, el.dataset.target),
+    revokeClient: (el) => revokeClient(el.dataset.target),
+
+    // Admin user management
+    confirmDeleteAdminUser: (el) => confirmDeleteAdminUser(el.dataset.uname),
+    openAdminAclModalFor: (el) => openAdminAclModalFor(el.dataset.uname),
+    jumpToAdminUser: (el, ev) => {
+        // The original inline-handler was
+        // `event.preventDefault(); jumpToAdminUser('…')` because
+        // the call site is an `<a href="#">`. The preventDefault
+        // is essential — without it the URL hash changes.
+        ev.preventDefault();
+        jumpToAdminUser(el.dataset.uname);
+    },
+
+    // Live monitor
+    monitorStart: () => monitorStart(),
+    monitorStop: () => monitorStop(),
+    monitorClear: () => monitorClear(),
+
+    // Backup / restore
+    downloadBackup: () => downloadBackup(),
+    uploadRestore: () => uploadRestore(),
+};
+
+function _dispatchClick(event) {
+    const el = event.target.closest('[data-action]');
+    if (!el) return;
+    const action = el.dataset.action;
+    const handler = ACTIONS[action];
+    if (typeof handler === 'function') {
+        handler(el, event);
+    }
+    // No console-warn on missing action: catches typos but also
+    // fires on every non-action click bubbling through unrelated
+    // elements with `data-action` ancestors. Keep silent; bad
+    // wiring shows as "button does nothing" — easy to notice.
+}
+
+// One change-event delegate, currently used only by the device
+// picker checkbox. Separate from the click delegate because some
+// browsers fire BOTH click + change when a checkbox is toggled
+// via the keyboard, and an idempotent toggle handler would still
+// double-fire. `data-change-action` keeps this surface tight.
+function _dispatchChange(event) {
+    const el = event.target.closest('[data-change-action]');
+    if (!el) return;
+    const action = el.dataset.changeAction;
+    if (action === 'devicePickerToggle') {
+        _devicePickerToggle(el);
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    document.body.addEventListener('click', _dispatchClick);
+    document.body.addEventListener('change', _dispatchChange);
+});
 
 // Init
 applyWhoami();

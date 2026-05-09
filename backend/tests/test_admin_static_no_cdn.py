@@ -115,6 +115,70 @@ def test_no_inline_style_attributes():
         )
 
 
+def test_no_inline_event_handlers_in_admin_html():
+    """P5 #1c lifted ~25 inline `onclick=` handlers from index.html
+    to a delegated `data-action` dispatcher. Regression-locking:
+    once admin flips to enforcing CSP under #1d, any inline `on*=`
+    attribute in HTML the browser parses gets blocked. Catch it
+    here at test time."""
+    import re as _re
+    for path in _admin_html_files():
+        src = _read(path)
+        # Common inline handler attrs. The list is conservative —
+        # if a future change introduces e.g. `onpointerdown=`,
+        # this regex will miss it; add to the alternation as
+        # needed.
+        offenders = _re.findall(
+            r'\s(on(?:click|change|input|submit|focus|blur|load|'
+            r'mouseover|mouseout|mousedown|mouseup|keydown|keyup|'
+            r'keypress))\s*=', src,
+        )
+        assert not offenders, (
+            f"{os.path.basename(path)} has inline event handler(s): "
+            f"{offenders[:3]}{'…' if len(offenders) > 3 else ''}"
+        )
+
+
+def test_no_inline_event_handlers_in_admin_js_template_literals():
+    """P5 #1c also lifted ~25 inline handlers that lived inside
+    template literals in app.js (e.g. `onclick="peekData('q', '${t}')"`).
+    Those would be `innerHTML`-injected at runtime — equivalent to
+    inline-handler HTML for CSP purposes. Catch a regression that
+    re-introduces one."""
+    import re as _re
+    path = os.path.join(_ADMIN_DIR, "app.js")
+    src = _read(path)
+    # Strip line + block comments first (the framework's docstring
+    # mentions `onclick=` historically; that's fine).
+    no_comments = _re.sub(r"//[^\n]*", "", src)
+    no_comments = _re.sub(r"/\*.*?\*/", "", no_comments, flags=_re.DOTALL)
+    offenders = _re.findall(
+        r'\bon(?:click|change|input|submit|focus|blur|load|'
+        r'mouseover|mouseout|keydown|keyup|keypress)\s*=\s*["\']',
+        no_comments,
+    )
+    assert not offenders, (
+        f"app.js has inline event handler(s) in template literals: "
+        f"{offenders[:3]}{'…' if len(offenders) > 3 else ''}"
+    )
+
+
+def test_no_inline_styles_in_admin_js_template_literals():
+    """Same shape as above for inline `style="..."` attributes
+    spliced into innerHTML strings. CSP `style-src 'self'`
+    blocks these once admin flips to enforcing."""
+    import re as _re
+    path = os.path.join(_ADMIN_DIR, "app.js")
+    src = _read(path)
+    no_comments = _re.sub(r"//[^\n]*", "", src)
+    no_comments = _re.sub(r"/\*.*?\*/", "", no_comments, flags=_re.DOTALL)
+    offenders = _re.findall(r'\bstyle\s*=\s*["\']', no_comments)
+    assert not offenders, (
+        f"app.js has {len(offenders)} inline style attribute(s) in "
+        "template literals; lift them to CSS classes."
+    )
+
+
 def test_index_html_references_vendored_paths():
     """The vendored files only matter if index.html actually
     points at them."""

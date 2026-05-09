@@ -788,11 +788,155 @@ tr.catalog-var-row:hover td { background: rgba(0, 240, 255, 0.06); }
 
 /* Vertical spacing utilities — match the inline `margin-top` /
    `margin-bottom` values that were sprinkled across the admin
-   layout. The two scales used in practice were 12px and 16px,
-   so two utilities cover everything. */
+   layout. Three scales cover everything we encountered (4px /
+   12px / 16px). */
+.mt-xs { margin-top: 4px; }
 .mt-sm { margin-top: 12px; }
 .mt-md { margin-top: 16px; }
 .mb-md { margin-bottom: 16px; }
+
+/* Used in template-literal'd KV editor (`_renderEditor`): the
+   "Encrypted" checkbox + its description label sit one above the
+   other, with light spacing. Distinct from `.checkbox-label`
+   (which is a flex row); this one is a block. */
+.encrypted-toggle-label {
+    display: block;
+    margin-top: 6px;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+.encrypted-toggle-checkbox {
+    width: auto;
+    margin-right: 6px;
+}
+
+/* =====================================================================
+   P5 #1c — badge variants + helpers lifted from inline styles in
+   `app.js` template literals. Each .badge-* sets the three colors
+   (bg/fg/border) the original inline declared; pair with the base
+   `.badge` class. Encrypted/auth/status pills are the dominant
+   pattern.
+   ===================================================================== */
+
+/* Encrypted-on-the-wire pill (purple/violet). Used in the KV list
+   for encrypted records (`<span class="badge badge-encrypted">…</span>`). */
+.badge-encrypted {
+    background: rgba(138, 43, 226, 0.15);
+    color: var(--accent-purple);
+    border: 1px solid var(--accent-purple);
+    font-size: 0.7rem;
+}
+
+/* "No Access" pill — used in the ACL listing for clients with
+   zero permissions (red, attention-grabbing). */
+.badge-no-access {
+    background: var(--accent-danger);
+    color: #fff;
+}
+
+/* ACL-prefix pill — inline-block compact layout used to visually
+   group an ACL's many prefixes onto one line with consistent
+   spacing. Pair with `.badge-acl-rw` or `.badge-acl-r` for the
+   per-access color theme. */
+.badge-acl-prefix {
+    display: inline-block;
+    white-space: nowrap;
+    margin: 2px 4px 2px 0;
+    font-size: 0.75rem;
+}
+.badge-acl-rw {
+    background: rgba(0, 240, 255, 0.15);
+    color: var(--accent-blue);
+    border: 1px solid var(--accent-blue);
+}
+.badge-acl-r {
+    background: rgba(138, 43, 226, 0.15);
+    color: var(--accent-purple);
+    border: 1px solid var(--accent-purple);
+}
+
+/* Spacing-only — adds left margin so a badge sits cleanly next
+   to text or another inline element. */
+.badge-spaced {
+    margin-left: 8px;
+}
+
+/* Provisioning-state pills — admin user list shows whether a user
+   has an ACL row in Redis yet. */
+.badge-provisioned {
+    background: rgba(0, 255, 136, 0.12);
+    color: var(--accent-success);
+    border: 1px solid rgba(0, 255, 136, 0.3);
+}
+.badge-needs-setup {
+    background: rgba(255, 170, 0, 0.12);
+    color: #ffaa00;
+    border: 1px solid rgba(255, 170, 0, 0.3);
+}
+
+/* Auth-path pills — admin user list shows which auth backend
+   each user came from (htpasswd / OAuth / ACL-only orphan). */
+.badge-auth-oauth {
+    background: rgba(0, 240, 255, 0.12);
+    color: var(--accent-blue);
+    border: 1px solid rgba(0, 240, 255, 0.3);
+}
+.badge-auth-htpasswd {
+    background: rgba(138, 43, 226, 0.18);
+    color: #c79bff;
+    border: 1px solid rgba(138, 43, 226, 0.3);
+}
+.badge-auth-acl-only {
+    background: rgba(255, 170, 0, 0.12);
+    color: #ffaa00;
+    border: 1px solid rgba(255, 170, 0, 0.3);
+}
+
+/* Inline text helpers — for `<small>` / `<strong>` callouts inside
+   template-literal'd HTML. The existing `.text-muted` class covers
+   the muted case; `.text-error` is new. */
+.text-error { color: var(--accent-danger); }
+
+/* Activity-log table cell helpers. Each column has a fixed visual
+   role (timestamp / client / action / status). The status column
+   is colored dynamically from `_logStatusColor`, which now returns
+   a class name (`.log-status-ok` / `.log-status-err`) rather than
+   a color value. */
+.col-nowrap { white-space: nowrap; }
+.col-log-timestamp { color: var(--text-muted); }
+.col-log-client-id { color: var(--accent-blue); }
+.log-status-ok { color: var(--accent-success); }
+.log-status-err { color: var(--accent-danger); }
+
+/* Monitor badge color palette — 10 fixed colors, picked
+   round-robin per client_id by `monitorClientColor`. Pre-#1c
+   the colors were inlined into `style="background:${color}22;
+   color:${color}; border-color:${color}44;"`; lifting to
+   classes lets `style-src 'self'` stay strict. The `--c` custom
+   property is only used as the source of the bg/color/border
+   triplet so editing a palette entry is a single change. */
+.monitor-color-0 { --c: #6c63ff; }
+.monitor-color-1 { --c: #00c2ff; }
+.monitor-color-2 { --c: #f5a623; }
+.monitor-color-3 { --c: #43e97b; }
+.monitor-color-4 { --c: #ff6b6b; }
+.monitor-color-5 { --c: #a18cd1; }
+.monitor-color-6 { --c: #fda085; }
+.monitor-color-7 { --c: #84fab0; }
+.monitor-color-8 { --c: #f093fb; }
+.monitor-color-9 { --c: #4facfe; }
+/* Apply the per-instance color to the monitor-badge using
+   `color-mix` to derive the alpha-tinted bg/border without
+   needing additional CSS variables. Falls back to the bare
+   `var(--c)` for the foreground text. Browser support for
+   `color-mix(in srgb, ...)` matches what we already require
+   for the customer page's hover tints (Chrome 111+, FF 113+,
+   Safari 16.4+). */
+.monitor-badge {
+    background: color-mix(in srgb, var(--c) 13%, transparent);
+    color: var(--c);
+    border: 1px solid color-mix(in srgb, var(--c) 27%, transparent);
+}
 
 /* Flex-fill — used in input rows where one input should expand
    to occupy remaining width. */

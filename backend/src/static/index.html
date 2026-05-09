@@ -63,7 +63,7 @@
                         <div class="card-content" id="queueList"></div>
                     </div>
                     <div class="stat-card kv-card">
-                        <h3>Persistent KV Pairs <span id="kvCount" class="badge">0</span> <button class="btn-sm btn-header-action" onclick="openKvModal()">+ Add</button></h3>
+                        <h3>Persistent KV Pairs <span id="kvCount" class="badge">0</span> <button class="btn-sm btn-header-action" data-action="openKvModal">+ Add</button></h3>
                         <div class="card-content" id="kvList"></div>
                     </div>
                 </div>
@@ -82,7 +82,7 @@
                 <!-- KV Editor Modal -->
                 <div id="kvModal" class="modal">
                     <div class="modal-content glass-panel modal-content-sm">
-                        <span class="close-btn" onclick="closeKvModal()">&times;</span>
+                        <span class="close-btn" data-action="closeKvModal">&times;</span>
                         <h3 id="kvModalTitle">Add KV Pair</h3>
                         <div class="input-group mt-md">
                             <label class="form-label">Key Path</label>
@@ -93,7 +93,7 @@
                             <div class="kv-value-row">
                                 <input type="text" id="kvValueInput" placeholder="e.g. 0.1" class="flex-grow">
                                 <button class="btn-sm hidden" type="button" id="kvRevealBtn"
-                                        onclick="_toggleReveal('kvValueInput', this)">Reveal</button>
+                                        data-action="toggleReveal" data-target="kvValueInput">Reveal</button>
                             </div>
                         </div>
                         <div class="input-group mt-sm">
@@ -103,8 +103,8 @@
                             </label>
                         </div>
                         <div class="modal-actions">
-                            <button class="btn-sm" onclick="closeKvModal()">Cancel</button>
-                            <button class="primary-btn" onclick="saveKv()">Save</button>
+                            <button class="btn-sm" data-action="closeKvModal">Cancel</button>
+                            <button class="primary-btn" data-action="saveKv">Save</button>
                         </div>
                     </div>
                 </div>
@@ -183,12 +183,12 @@
 
                     <div class="acl-add-row">
                         <input type="text" id="aclNewPrefix" placeholder="Prefix (e.g. coaticlock)" class="flex-grow">
-                        <button class="acl-access-toggle access-rw" id="aclNewAccessToggle" onclick="toggleNewAccess()">rw</button>
-                        <button class="btn-sm" onclick="aclAddRule()">+ Add Rule</button>
+                        <button class="acl-access-toggle access-rw" id="aclNewAccessToggle" data-action="toggleNewAccess">rw</button>
+                        <button class="btn-sm" data-action="aclAddRule">+ Add Rule</button>
                         <!-- Shown only when editing an admin user's ACL. Lets the operator
                              pick devices instead of typing prefixes — see Phase 5b. -->
                         <button class="btn-sm hidden" id="aclSelectDevicesBtn"
-                                onclick="openDevicePicker()">+ Select Devices</button>
+                                data-action="openDevicePicker">+ Select Devices</button>
                     </div>
                     <p class="form-hint-sm">
                         Use prefix <code>*</code> with <code>rw</code> for unrestricted admin access.
@@ -204,8 +204,8 @@
                     </div>
 
                     <div class="modal-actions">
-                        <button class="btn-sm" onclick="closeAclModal()">Cancel</button>
-                        <button class="primary-btn" onclick="saveAcl()">Save Permissions</button>
+                        <button class="btn-sm" data-action="closeAclModal">Cancel</button>
+                        <button class="primary-btn" data-action="saveAcl">Save Permissions</button>
                     </div>
                 </div>
             </div>
@@ -216,7 +216,7 @@
             <div id="devicePickerModal" class="modal">
                 <div class="modal-content glass-panel">
                     <span class="close-btn" id="devicePickerClose"
-                          onclick="closeDevicePicker()">&times;</span>
+                          data-action="closeDevicePicker">&times;</span>
                     <h3>Select devices</h3>
                     <p class="form-hint">
                         Each selected device adds <code>&lt;app&gt;/&lt;device&gt;</code> with <code>rw</code>
@@ -225,9 +225,9 @@
                     </p>
                     <div id="devicePickerList" class="device-picker-list"></div>
                     <div class="modal-actions">
-                        <button class="btn-sm" onclick="closeDevicePicker()">Cancel</button>
+                        <button class="btn-sm" data-action="closeDevicePicker">Cancel</button>
                         <button class="primary-btn" id="devicePickerConfirm"
-                                onclick="confirmDevicePicker()" disabled>Add 0 device(s)</button>
+                                data-action="confirmDevicePicker" disabled>Add 0 device(s)</button>
                     </div>
                 </div>
             </div>
@@ -286,15 +286,15 @@
                 <!-- Detail state: shown when an app is selected -->
                 <div id="catalogDetailPane" class="hidden">
                     <div class="card-toolbar mb-md">
-                        <button class="btn-ghost" onclick="closeCatalogDetail()">&larr; Back to app list</button>
+                        <button class="btn-ghost" data-action="closeCatalogDetail">&larr; Back to app list</button>
                         <span class="card-toolbar-title" id="catalogDetailTitle"></span>
                     </div>
                     <div id="catalogDetailError" class="hidden alert-success alert-error-strong"></div>
 
                     <nav class="catalog-tabs" id="catalogTabs">
-                        <button class="catalog-tab active" data-tab="variables" onclick="switchCatalogTab('variables')">Variables</button>
-                        <button class="catalog-tab" data-tab="devices" onclick="switchCatalogTab('devices')">Devices</button>
-                        <button class="catalog-tab" data-tab="raw" onclick="switchCatalogTab('raw')">Raw</button>
+                        <button class="catalog-tab active" data-tab="variables" data-action="switchCatalogTab">Variables</button>
+                        <button class="catalog-tab" data-tab="devices" data-action="switchCatalogTab">Devices</button>
+                        <button class="catalog-tab" data-tab="raw" data-action="switchCatalogTab">Raw</button>
                     </nav>
 
                     <div id="catalogVariablesTabPane" class="catalog-tab-pane">
@@ -327,7 +327,7 @@
                         <!-- Device detail state: effective-config table -->
                         <div id="catalogDeviceDetailPane" class="hidden">
                             <div class="card-toolbar mb-md">
-                                <button class="btn-ghost" onclick="closeDeviceDetail()">&larr; Back to device list</button>
+                                <button class="btn-ghost" data-action="closeDeviceDetail">&larr; Back to device list</button>
                                 <span class="card-toolbar-title" id="catalogDeviceDetailTitle"></span>
                             </div>
                             <div class="card glass-panel card-flush">
@@ -373,13 +373,13 @@
             <!-- Key Editor Modal (M3b) -->
             <div id="keyEditorModal" class="modal">
                 <div class="modal-content glass-panel key-editor-modal">
-                    <span class="close-btn" onclick="closeKeyEditor()">&times;</span>
+                    <span class="close-btn" data-action="closeKeyEditor">&times;</span>
                     <h3 id="keyEditorTitle"></h3>
                     <div class="key-editor-meta" id="keyEditorMeta"></div>
                     <div class="key-editor-pane hidden" id="keyEditorAppPane"></div>
                     <div class="key-editor-pane hidden" id="keyEditorDevicePane"></div>
                     <div class="modal-actions">
-                        <button class="btn-sm" onclick="closeKeyEditor()">Close</button>
+                        <button class="btn-sm" data-action="closeKeyEditor">Close</button>
                     </div>
                 </div>
             </div>
@@ -393,8 +393,8 @@
 
                 <div class="card glass-panel form-card monitor-controls">
                     <input type="text" id="monitorTopic" class="monitor-topic-input" placeholder="Topic name (e.g. coaticlock)">
-                    <button id="monitorStartBtn" class="primary-btn" onclick="monitorStart()">&#9654; Watch</button>
-                    <button id="monitorStopBtn" class="primary-btn btn-danger hidden" onclick="monitorStop()">&#9632; Stop</button>
+                    <button id="monitorStartBtn" class="primary-btn" data-action="monitorStart">&#9654; Watch</button>
+                    <button id="monitorStopBtn" class="primary-btn btn-danger hidden" data-action="monitorStop">&#9632; Stop</button>
                     <div id="monitorStatus" class="monitor-status-off">Idle</div>
                 </div>
 
@@ -403,7 +403,7 @@
                 <div class="card glass-panel card-flush">
                     <div class="card-toolbar">
                         <span class="card-toolbar-title" id="monitorFeedTitle">No topic selected</span>
-                        <button class="btn-ghost" onclick="monitorClear()">Clear</button>
+                        <button class="btn-ghost" data-action="monitorClear">Clear</button>
                     </div>
                     <div id="monitorFeed" class="monitor-feed"></div>
                 </div>
@@ -448,7 +448,7 @@
                 <div class="card glass-panel form-card">
                     <h3>Download Backup</h3>
                     <p class="form-hint">Downloads a <code>stra2us_backup.json</code> file containing all client IDs, secrets, and ACLs.</p>
-                    <button class="primary-btn" onclick="downloadBackup()">&#8659; Download Backup</button>
+                    <button class="primary-btn" data-action="downloadBackup">&#8659; Download Backup</button>
                 </div>
 
                 <div class="card glass-panel form-card">
@@ -461,7 +461,7 @@
                         <input type="checkbox" id="forceRestore" class="checkbox-input">
                         <label for="forceRestore" class="form-hint">Force Overwrite (replace existing clients)</label>
                     </div>
-                    <button class="primary-btn btn-danger-gradient" onclick="uploadRestore()">&#8657; Restore Backup</button>
+                    <button class="primary-btn btn-danger-gradient" data-action="uploadRestore">&#8657; Restore Backup</button>
                     <div id="restoreResult" class="hidden alert-success mt-md"></div>
                 </div>
             </section>
