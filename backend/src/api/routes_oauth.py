@@ -14,6 +14,7 @@ staging without disturbing the live auth path.
 """
 
 import json
+import logging
 import os
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -25,6 +26,13 @@ from api.dependencies import ADMIN_ACL_KEY_FMT
 
 
 router = APIRouter()
+
+
+# Dedicated logger for OAuth-flow telemetry. Stays narrow (just
+# this module) so a future grep / log shipper can route on the
+# `stra2us.oauth` channel name without picking up the FastAPI
+# request log.
+_oauth_log = logging.getLogger("stra2us.oauth")
 
 
 # Cookie path is `/` so the session cookie applies to /admin/, /app/,
@@ -120,6 +128,28 @@ async def oauth_callback(request: Request, code: str = "", state: str = ""):
         # benign cause is the user opening the callback URL in a
         # different browser/private window than the one that started
         # the flow — friendly message rather than blunt 400.
+        #
+        # Instrumentation (filed in TODO.md as the "intermittent
+        # 'Sign-in session expired or was forged'" item): log
+        # WHICH case we're in so we can tell the three suspected
+        # causes apart in real telemetry.
+        #   - cookie missing  → multi-tab race or short-lived
+        #     cookie expired before callback returned
+        #   - cookie present  → mismatch; older tab racing newer
+        #                       flow's overwrite, or samesite=lax
+        #                       drop on cross-redirect
+        # `state` itself is on the URL the browser already saw, so
+        # logging its first 8 chars isn't a new disclosure; the
+        # full-string compare lives inside `verify_state_token`.
+        _oauth_log.warning(
+            "csrf_mismatch",
+            extra={
+                "case": "cookie_missing" if state_cookie is None else "cookie_mismatch",
+                "state_param_prefix": (state or "")[:8],
+                "ua": request.headers.get("user-agent", "")[:120],
+                "referer": request.headers.get("referer", "")[:200],
+            },
+        )
         return _error_response(
             400,
             "Sign-in session expired or was forged.",
