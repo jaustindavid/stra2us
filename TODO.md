@@ -223,6 +223,23 @@
   ago"; both callers (`Last seen ${...}` and the activity-row
   `<span class="activity-when">`) dropped their hardcoded " ago".
 
+- **Catalogs view lists asset keys as if they were catalogs.** The
+  Catalogs admin tab calls `/kv_scan?prefix=_catalog/` and renders
+  every returned key as a catalog row. For an app like
+  `critterchron` that means four rows where there should be one:
+  `critterchron` (the real catalog at `_catalog/critterchron`),
+  plus `critterchron/_assets/logo.svg`,
+  `critterchron/_assets_index`, and
+  `critterchron/_assets/logo.svg.meta` — the asset bytes, the
+  asset-index map, and the per-asset metadata, which all live
+  under `_catalog/<app>/_assets/...` (3+ segments under the
+  stash). Fix in `fetchCatalogList()`
+  (`backend/src/static/app.js` ~line 861): filter `items` to keys
+  whose tail past `_catalog/` contains no `/` — i.e., the bare
+  `_catalog/<app>` shape. One-line filter; same predicate that
+  already gates the catalog-vs-assets distinction in
+  `routes_device.py:22-26`.
+
 - **Scoped admins can't see Activity Logs view.** A non-superuser
   admin (e.g. `austin`, ACL has `critterchron/...` prefixes but no
   `*:rw`) sees a blank Activity Logs page and no filter chips. Root

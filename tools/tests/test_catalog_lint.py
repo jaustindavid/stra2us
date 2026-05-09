@@ -127,6 +127,81 @@ def test_widget_secret_only_on_string():
     assert "vars.n.widget" in paths
 
 
+# ----- field-level: secret-pairing warnings (v1.6.x) ---------------
+# `widget: secret`, `write_only: true`, `encrypted: true` are three
+# independent primitives that almost always belong together. The
+# catalog grammar leaves them composable on purpose, but the lint
+# warns when an author has set one without the others — to catch the
+# Wi-Fi-password-rendered-as-plaintext class of mistake at publish
+# time. Severity: warning (not error) so genuine edge cases stay
+# expressible.
+
+def test_secret_pairing_encrypted_without_widget_secret_warns():
+    cat = _cat(vars={
+        "wifi": Var(type="string", scope=["app"], encrypted=True),
+    })
+    issues = warnings(lint_catalog(cat))
+    assert any(
+        i.path == "vars.wifi.encrypted"
+        and "without `widget: secret`" in i.message
+        for i in issues
+    )
+
+
+def test_secret_pairing_widget_secret_without_encrypted_warns():
+    cat = _cat(vars={
+        "wifi": Var(type="string", scope=["app"], widget="secret",
+                    write_only=True),
+    })
+    issues = warnings(lint_catalog(cat))
+    assert any(
+        i.path == "vars.wifi.widget"
+        and "without `encrypted: true`" in i.message
+        for i in issues
+    )
+
+
+def test_secret_pairing_widget_secret_without_write_only_warns():
+    cat = _cat(vars={
+        "wifi": Var(type="string", scope=["app"], widget="secret",
+                    encrypted=True),
+    })
+    issues = warnings(lint_catalog(cat))
+    assert any(
+        i.path == "vars.wifi.widget"
+        and "without `write_only: true`" in i.message
+        for i in issues
+    )
+
+
+def test_secret_pairing_full_triplet_clean():
+    """All three set: no pairing warnings, no errors."""
+    cat = _cat(vars={
+        "wifi": Var(type="string", scope=["app"], widget="secret",
+                    write_only=True, encrypted=True),
+    })
+    issues = lint_catalog(cat)
+    assert errors(issues) == []
+    # No pairing warnings on the wifi var (other unrelated warnings
+    # in the catalog would still pass through, hence the targeted check).
+    pairing_paths = {"vars.wifi.encrypted", "vars.wifi.widget"}
+    pairing_warnings = [
+        i for i in warnings(issues) if i.path in pairing_paths
+    ]
+    assert pairing_warnings == []
+
+
+def test_secret_pairing_no_secret_no_encrypted_no_warnings():
+    """Bare string field: no pairing warnings — the lint only nudges
+    when at least one of the triplet is set."""
+    cat = _cat(vars={
+        "name": Var(type="string", scope=["app"]),
+    })
+    issues = warnings(lint_catalog(cat))
+    pairing_paths = {"vars.name.encrypted", "vars.name.widget"}
+    assert not any(i.path in pairing_paths for i in issues)
+
+
 def test_widget_radio_requires_enum():
     cat = _cat(vars={"s": Var(type="string", scope=["app"], widget="radio")})
     issues = errors(lint_catalog(cat))

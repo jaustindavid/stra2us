@@ -1478,6 +1478,75 @@ Tag `v1.6.3` on the verified commit, push tag, promote.
 that accumulate during fast feature work and benefit from a periodic
 "sweep the trivials" pass.
 
+### v1.6.4 — catalog-lint secret-pairing warnings *(2026-05-09)*
+
+Catalog-author-facing companion to v1.6.3. Filed after a deployed
+catalog had `encrypted: true` on a Wi-Fi password field but no
+`widget: secret`, so the customer page rendered the password as a
+plain text input that displayed the stored value on every page
+load. Operator caught it visually; the lint would have caught it
+at publish time.
+
+**Background.** Three independent primitives govern a "this field
+holds a password / API key / token" treatment:
+
+1. `widget: secret` — input is masked (`<input type="password">`).
+2. `write_only: true` — untouched-empty submits omit the field, so
+   the masked-empty render doesn't clobber the stored value.
+3. `encrypted: true` — value stored encrypted at rest (msgpack ext
+   type 0x21, see `docs/fr_encrypted_values.md`).
+
+The catalog grammar leaves them composable on purpose: edge cases
+(license keys an operator wants masked but stored plaintext;
+fields encrypted at rest but read in clear from device firmware)
+stay expressible. But for the overwhelmingly common case the
+right answer is "all three or none," and authors who set one
+without the others almost always meant to set all three.
+
+**Change.** New `_lint_field_secret_pairing` in
+`tools/stra2us_cli/catalog_lint.py`, wired into the field-loop in
+`lint_catalog` right after `_lint_field_widget`. Three independent
+**warnings** (severity: warning, not error — the escape hatch is
+real):
+
+| Trigger                                          | Path                | Nudge                                 |
+| ------------------------------------------------ | ------------------- | ------------------------------------- |
+| `encrypted: true` without `widget: secret`       | `vars.X.encrypted`  | "renders as a plain text input"       |
+| `widget: secret` without `encrypted: true`       | `vars.X.widget`     | "value is stored in plaintext"        |
+| `widget: secret` without `write_only: true`      | `vars.X.widget`     | "untouched submit will clobber"       |
+
+Each warning silenceable by completing the triplet. An author who
+genuinely wants the partial combination ignores the warning.
+
+**Tests.** Tools test count 168 → 174 (+5 + 1 already present):
+* `test_secret_pairing_encrypted_without_widget_secret_warns`
+* `test_secret_pairing_widget_secret_without_encrypted_warns`
+* `test_secret_pairing_widget_secret_without_write_only_warns`
+* `test_secret_pairing_full_triplet_clean` (happy path: all three set)
+* `test_secret_pairing_no_secret_no_encrypted_no_warnings` (none set)
+
+Backend untouched (lint runs in the CLI publish path); 261 backend
+tests still green.
+
+**Why a separate release from v1.6.3.** v1.6.3 was the UI-fixes
+batch (`backend/src/static/...`); this is `tools/...` only and
+catalog-author-facing rather than runtime-user-facing. Different
+audience, different surface, different test totals — clean to keep
+separate so the changelog reads as cause-and-effect.
+
+**Rollout.** No prod runtime impact (the lint runs at
+`stra2us catalog publish` time, not in the device API). Branch off
+`main`, single commit, single deploy/promote — the
+`tools/stra2us_cli` package is baked into the image at build time
+(see `Dockerfile`'s `pip install /tools` line), so the new lint
+ships to staging + prod via the normal image-rebuild path.
+
+To verify: re-publish the critterchron catalog from staging
+(`stra2us catalog publish ...`). Any field missing a leg of the
+triplet surfaces a warning. The example bundle at
+`tools/examples/critterchron_v2.s2s.yaml:106-115` already has the
+full triplet, so it lints clean.
+
 ### What's left
 
 Nothing on the catalog-app-ui FR's followup list. The

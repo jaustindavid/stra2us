@@ -237,6 +237,63 @@ def _lint_field_widget(var: Var, name: str, issues: list[LintIssue]) -> None:
             ))
 
 
+def _lint_field_secret_pairing(var: Var, name: str, issues: list[LintIssue]) -> None:
+    """Warn on incomplete `widget: secret` / `encrypted` / `write_only` triplets.
+
+    These three are independently-toggleable primitives — by design, so
+    edge cases (display-mask-only license keys, etc.) stay expressible —
+    but for the overwhelmingly common case of "this field stores a
+    password / API key / token" the operator wants all three:
+
+    * `widget: secret` masks the input (`<input type="password">`)
+    * `write_only: true` makes the form omit the field on untouched
+      submit, so the masked-empty render doesn't clobber the stored
+      value
+    * `encrypted: true` stores the value encrypted at rest (msgpack
+      ext type 0x21, `docs/fr_encrypted_values.md`)
+
+    Each pairing warning is independent and silenceable by completing
+    the triplet — there's no error here, just nudges. An operator who
+    genuinely wants the partial combination can ignore the warning.
+
+    Filed against the v1.6.x cycle after a deployed catalog had
+    `encrypted: true` but no `widget: secret`, so the customer page
+    rendered the Wi-Fi password as a plain text input that showed the
+    stored value on every reload. The lint warning would have caught
+    that at publish time."""
+    base = f"vars.{name}"
+
+    # encrypted-at-rest but not display-masked: surprising for a value
+    # that's deliberately marked sensitive enough to encrypt.
+    if var.encrypted and var.widget != "secret":
+        issues.append(LintIssue(
+            "warning", f"{base}.encrypted",
+            "`encrypted: true` without `widget: secret` — value is encrypted "
+            "at rest but renders as a plain text input on the customer page; "
+            "consider adding `widget: secret`",
+        ))
+
+    if var.widget == "secret":
+        # masked input but plaintext storage: surprising for a password.
+        if not var.encrypted:
+            issues.append(LintIssue(
+                "warning", f"{base}.widget",
+                "`widget: secret` without `encrypted: true` — input is masked "
+                "but value is stored in plaintext; consider adding "
+                "`encrypted: true`",
+            ))
+        # masked input but no preserve-on-empty: an untouched submit will
+        # send empty-string and clobber the stored value.
+        if not var.write_only:
+            issues.append(LintIssue(
+                "warning", f"{base}.widget",
+                "`widget: secret` without `write_only: true` — masked field "
+                "renders empty by default and an untouched submit will write "
+                "the empty value over the stored one; consider adding "
+                "`write_only: true`",
+            ))
+
+
 def _lint_field_string_only(var: Var, name: str, issues: list[LintIssue]) -> None:
     base = f"vars.{name}"
     for hint, value in (
@@ -377,6 +434,7 @@ def lint_catalog(catalog: Catalog, *,
         _lint_field_enum(var, name, issues)
         _lint_field_numeric_bounds(var, name, issues)
         _lint_field_widget(var, name, issues)
+        _lint_field_secret_pairing(var, name, issues)
         _lint_field_string_only(var, name, issues)
         _lint_field_help_markdown(var, name, issues)
 
