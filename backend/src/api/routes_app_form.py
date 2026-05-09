@@ -18,9 +18,24 @@ values arrive as strings. We mirror the existing admin endpoint
 (`backend/src/api/routes_admin.py:set_kv`)'s pattern: try
 `json.loads` to recover types (so `"129"` stores as int 129 and
 `"true"` as bool); fall back to string when the JSON parse fails.
-The encrypted-flag sidecar (`kv:<key>:enc`) is preserved across
-the write so an encrypted record stays encrypted after a form
-save.
+
+The encrypted-flag sidecar (`kv:<key>:enc`) is **set from the
+catalog** as of v1.6.5, not from prior state. If the catalog
+declares `encrypted: true`, every form-submit lands the value
+encrypted (sets `:enc=1`); if the catalog declares (or implies)
+not-encrypted, every form-submit clears the flag. Pre-v1.6.5
+this path "preserved" whatever sidecar was there, which broke
+the case where the operator deleted both the value and the
+sidecar — the next form-submit landed plaintext despite the
+catalog declaring `encrypted: true`. Catalog-as-authoritative
+matches the broader principle filed in TODO.md ("`stra2us set`
+should honor the catalog's `encrypted:` field").
+
+Fields NOT present in the catalog (a stale POST after a
+republish that removed the field) fall back to the pre-v1.6.5
+"preserve `:enc`" behavior — a vanishing field shouldn't
+silently strip encryption from data that's still legitimately
+stored.
 """
 
 from __future__ import annotations
@@ -33,6 +48,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
 from api.dependencies import check_acl, get_admin_context
+from api.routes_app_theme import load_catalog_dict
 from core.redis_client import get_redis_client
 
 
@@ -74,6 +90,18 @@ async def submit_device_form(app: str, device: str, request: Request):
     form = await request.form()
     redis = get_redis_client()
 
+    # v1.6.5: load the catalog so the encryption decision can honor
+    # the catalog's `encrypted: true` declaration. Pre-v1.6.5 this
+    # path "preserved whatever was there" — which broke when the
+    # operator deleted the sidecar (or set the value for the first
+    # time): the new write landed plaintext despite the catalog
+    # explicitly declaring it encrypted. The catalog is now
+    # authoritative for the catalog-aware write path; matches the
+    # principle in TODO.md ("`stra2us set` should honor the
+    # catalog's `encrypted:` field").
+    catalog = await load_catalog_dict(app)
+    catalog_vars = (catalog or {}).get("vars") or {}
+
     for name, raw_value in form.multi_items():
         # multi_items() yields all (k, v) pairs; we don't expect
         # multi-valued fields in the customer form (radio groups
@@ -89,18 +117,32 @@ async def submit_device_form(app: str, device: str, request: Request):
         decoded = _decode_form_value(str(raw_value))
         packed = msgpack.packb(decoded, use_bin_type=True)
         kv_key = f"kv:{app}/{device}/{name}"
-        # Preserve the encrypted-flag sidecar across the write.
-        # Writes through the device-side `/kv/` path use
-        # `X-Encrypted: 1` to set the flag; the form-submit
-        # path doesn't have a header to consult, so we just keep
-        # whatever was there. Lint marks the var as `encrypted:
-        # true`; the existing record's flag is the authoritative
-        # state per fr_encrypted_values.md ("server-side flag is
-        # what governs wire behavior").
-        was_encrypted = await redis.get(f"{kv_key}:enc")
+
+        # Decide encryption from the catalog, not from prior state.
+        # If the catalog declares the field `encrypted: true`,
+        # we set `:enc=1` regardless of whether the sidecar was
+        # there before. If the catalog says (or implies) NOT
+        # encrypted, we drop any stale `:enc` so the field's wire
+        # behavior matches the current catalog. A field absent
+        # from the catalog (e.g. a stale POST after a republish
+        # that removed the field) falls back to the pre-v1.6.5
+        # "preserve" semantics — we don't want a disappearing
+        # field to silently strip encryption from data that's
+        # still legitimately stored.
+        var = catalog_vars.get(name) if isinstance(catalog_vars, dict) else None
         await redis.set(kv_key, packed)
-        if was_encrypted:
-            await redis.set(f"{kv_key}:enc", b"1")
+        if isinstance(var, dict):
+            if var.get("encrypted"):
+                await redis.set(f"{kv_key}:enc", b"1")
+            else:
+                await redis.delete(f"{kv_key}:enc")
+        else:
+            # Field not in catalog: preserve prior `:enc` (the
+            # pre-v1.6.5 behavior). Read-then-(maybe)-set so a
+            # stale form doesn't clobber a legitimate flag.
+            was_encrypted = await redis.get(f"{kv_key}:enc")
+            if was_encrypted:
+                await redis.set(f"{kv_key}:enc", b"1")
 
     # POST-redirect-GET so a refresh doesn't re-submit. 303
     # explicitly forces the GET method; 302 leaves it

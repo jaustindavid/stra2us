@@ -199,6 +199,18 @@ def _render_setting_card(name: str, var: dict, current: str | None,
             1,
         )
         parts.append(widget_with_id)
+        # v1.6.5: also emit a Reveal/Hide toggle next to any
+        # `widget: secret` field, even when there's no encrypted
+        # value to fetch. Pre-v1.6.5 the customer typed blind into
+        # a `<input type="password">` with no peek option until
+        # they saved; now they can confirm what they typed.
+        # Skipped for `write_only` fields — those deliberately
+        # render without any read-back affordance.
+        if var.get("widget") == "secret" and not var.get("write_only"):
+            parts.append(
+                f'<button type="button" class="reveal-btn" '
+                f'data-var="{_esc(name)}">Reveal</button>'
+            )
 
     parts.append("</div>")
     return "".join(parts)

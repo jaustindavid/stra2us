@@ -226,6 +226,53 @@
   ago"; both callers (`Last seen ${...}` and the activity-row
   `<span class="activity-when">`) dropped their hardcoded " ago".
 
+- **`stra2us set` should honor the catalog's `encrypted:` field,
+  not the `--encrypted` CLI flag.** Today the CLI's catalog-aware
+  write path (`cmd_set` in `tools/stra2us_cli/cli.py:581`) passes
+  `encrypted=args.encrypted` straight through to the wire — the
+  operator picks whether to encrypt at write time, and the
+  catalog's `encrypted: true` is a documentation-only hint
+  (`Var.encrypted` comment in `catalog.py:100-107`: *"Stra2us
+  itself does not act on this field"*). That's the wrong split
+  of responsibilities: an operator setting a catalog-declared
+  key should not be able to skip the encryption the catalog
+  declares, and shouldn't have to remember to pass a flag to
+  match the catalog's own metadata.
+
+  Proposed split:
+  1. **`stra2us set <target> <key> <value>` (catalog-aware).** The
+     catalog is the source of truth; encrypt iff
+     `cat.vars[key].encrypted` is true. The `--encrypted` CLI flag
+     becomes a no-op (deprecate with a warning, or remove
+     outright in a major bump). The catalog hint stops being a
+     hint and becomes an enforced contract.
+  2. **`stra2us put <key> <value>` (raw KV, no catalog).** No
+     catalog consulted; `--encrypted` stays operator-controlled.
+     Same shape as today. This is the escape hatch for
+     non-catalog data and for clients implementing their own
+     encryption discipline.
+
+  Knock-on changes:
+  * Update the `Var.encrypted` field comment in
+    `tools/stra2us_cli/catalog.py:100-107` — it currently says
+    "Stra2us itself does not act on this field," which becomes
+    untrue.
+  * The v1.6.4 secret-pairing lint (warns on `widget: secret`
+    without `encrypted: true`) keeps making sense as
+    catalog-author guidance; this TODO closes the loop on the
+    write side so the catalog's `encrypted: true` is no longer
+    a paperwork promise.
+  * Existing data that's `:enc=false` despite the catalog saying
+    `encrypted: true` becomes a recognizable drift pattern —
+    file a separate "republish + re-set encrypted-flagged
+    catalog values" runbook entry the first time we hit it in
+    practice.
+
+  Rough scope: small (~10 lines in `cmd_set`, plus a deprecation
+  warning + comment update + 1-2 tests). Could ship as a
+  standalone v1.6.6 or fold into whatever the next CLI-touching
+  release is.
+
 - ~~**Catalogs view lists asset keys as if they were catalogs.**~~
   Landed 2026-05-09 in v1.6.5. `fetchCatalogList()` in
   `backend/src/static/app.js` now filters the `/kv_scan` results

@@ -20,10 +20,11 @@ from __future__ import annotations
 
 import msgpack
 import pytest
+import yaml
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-from api import dependencies, routes_app_form
+from api import dependencies, routes_app_form, routes_app_theme
 from core import redis_client
 
 
@@ -48,9 +49,24 @@ class _FakeRedis:
 def fake_redis(monkeypatch):
     fr = _FakeRedis()
     # Patch in every place the route reaches for a redis client.
+    # `routes_app_theme.get_redis_client` is on the list because
+    # v1.6.5's catalog-honors form-submit calls
+    # `load_catalog_dict` from that module to look up encryption
+    # intent — without this patch the real Redis client gets
+    # invoked and the test event loop closes mid-await.
     monkeypatch.setattr(redis_client, "get_redis_client", lambda: fr)
     monkeypatch.setattr(routes_app_form, "get_redis_client", lambda: fr)
+    monkeypatch.setattr(routes_app_theme, "get_redis_client", lambda: fr)
     return fr
+
+
+def _stash_catalog(fake_redis, app: str, vars_dict: dict) -> None:
+    """Drop a catalog YAML at `kv:_catalog/<app>` in the fake Redis,
+    in the wire shape `load_catalog_dict` expects: msgpack-wrapped
+    YAML string. Tests that exercise the form-submit's catalog
+    lookup call this to set up the encryption-intent signal."""
+    yaml_text = yaml.safe_dump({"app": app, "vars": vars_dict})
+    fake_redis._kv[f"kv:_catalog/{app}"] = msgpack.packb(yaml_text, use_bin_type=True)
 
 
 @pytest.fixture
@@ -128,13 +144,21 @@ def test_empty_value_writes_empty_string(client, fake_redis):
     assert msgpack.unpackb(raw, raw=False) == ""
 
 
-# ----- encrypted flag preservation -----
+# ----- encrypted flag (catalog-driven, v1.6.5) -----
 
 def test_encrypted_flag_preserved_on_write(client, fake_redis):
     """Pre-existing encrypted record stays encrypted after a form
-    write. The form-submit path doesn't have the device-side
-    `X-Encrypted: 1` header signal, so we read the existing flag
-    and restore it across the write."""
+    write when the catalog also says `encrypted: true`. Pre-v1.6.5
+    this test exercised "preserve whatever sidecar was there";
+    post-v1.6.5 the catalog drives the decision, but the visible
+    behavior on this fixture is identical (catalog says encrypted,
+    sidecar already says encrypted, post lands encrypted). Kept
+    under the original name so a future change to the contract
+    is still load-bearing in the test suite."""
+    _stash_catalog(fake_redis, "demo", {
+        "wifi_password": {"type": "string", "scope": ["app", "device"],
+                          "encrypted": True, "label": "Wi-Fi"},
+    })
     fake_redis._kv["kv:demo/dev1/wifi_password:enc"] = b"1"
 
     client.post("/app/demo/dev1", data={"wifi_password": "newsecret"},
@@ -145,11 +169,97 @@ def test_encrypted_flag_preserved_on_write(client, fake_redis):
 
 
 def test_no_encrypted_flag_when_record_was_plaintext(client, fake_redis):
-    """A field that wasn't encrypted before doesn't get the flag
-    set by a form write. Plaintext stays plaintext."""
+    """A field that wasn't encrypted before AND isn't catalog-flagged
+    encrypted doesn't get the flag set by a form write. Plaintext
+    stays plaintext. Both signals (sidecar absent + catalog false)
+    point the same way; this is the unambiguous baseline."""
+    _stash_catalog(fake_redis, "demo", {
+        "greeting": {"type": "string", "scope": ["app", "device"],
+                     "label": "Greeting"},
+    })
     client.post("/app/demo/dev1", data={"greeting": "hello"},
                 follow_redirects=False)
     assert "kv:demo/dev1/greeting:enc" not in fake_redis._kv
+
+
+# ----- v1.6.5: catalog-honors form-submit ---------------------------
+# Pre-v1.6.5 the form-submit path "preserved" whatever `:enc` flag
+# was already on the record. That broke when the operator deleted
+# both the value and the sidecar — the next form-submit landed
+# plaintext despite the catalog declaring `encrypted: true`. v1.6.5
+# loads the catalog and lets it drive the decision: catalog true
+# → set `:enc=1`, catalog false/absent → clear `:enc`. The catalog
+# lookup falls back to "preserve" only when the field is absent
+# from the catalog entirely (a stale POST after a republish).
+
+def test_catalog_encrypted_true_sets_enc_flag(client, fake_redis):
+    """Bug #2 of v1.6.5: catalog says encrypted=true, no prior
+    `:enc` sidecar, fresh form submit. Pre-v1.6.5 the value landed
+    plaintext (no prior flag to preserve). Post-v1.6.5 the
+    catalog's declaration is enforced — `:enc=1` after submit."""
+    _stash_catalog(fake_redis, "demo", {
+        "wifi_password": {"type": "string", "scope": ["app", "device"],
+                          "encrypted": True, "label": "Wi-Fi"},
+    })
+    # No pre-existing :enc — this is the regression case from
+    # the operator's "delete keys, re-set value" workflow.
+    assert "kv:demo/dev1/wifi_password:enc" not in fake_redis._kv
+
+    client.post("/app/demo/dev1", data={"wifi_password": "freshsecret"},
+                follow_redirects=False)
+
+    assert fake_redis._kv.get("kv:demo/dev1/wifi_password:enc") == b"1"
+    raw = fake_redis._kv["kv:demo/dev1/wifi_password"]
+    assert msgpack.unpackb(raw, raw=False) == "freshsecret"
+
+
+def test_catalog_encrypted_false_clears_stale_enc_flag(client, fake_redis):
+    """Catalog says encrypted=false, but a stale `:enc=1` sidecar
+    is present (e.g. from a previous catalog version that had the
+    field flagged). The form-submit clears the flag so the
+    on-disk state matches the current catalog's declaration."""
+    _stash_catalog(fake_redis, "demo", {
+        "greeting": {"type": "string", "scope": ["app", "device"],
+                     "label": "Greeting"},  # no encrypted:true
+    })
+    fake_redis._kv["kv:demo/dev1/greeting:enc"] = b"1"  # stale
+
+    client.post("/app/demo/dev1", data={"greeting": "hello"},
+                follow_redirects=False)
+
+    assert "kv:demo/dev1/greeting:enc" not in fake_redis._kv
+
+
+def test_field_absent_from_catalog_preserves_enc_flag(client, fake_redis):
+    """Field is in the form POST but not in the catalog (e.g. a
+    stale browser tab after a republish that removed the field).
+    Falls back to the pre-v1.6.5 "preserve" semantics — we don't
+    want a vanishing field to silently strip encryption from
+    data that's still legitimately stored."""
+    _stash_catalog(fake_redis, "demo", {
+        "other_field": {"type": "string", "scope": ["app", "device"],
+                        "label": "Other"},
+    })
+    fake_redis._kv["kv:demo/dev1/legacy_secret:enc"] = b"1"
+
+    client.post("/app/demo/dev1", data={"legacy_secret": "preserved"},
+                follow_redirects=False)
+
+    # `legacy_secret` not in catalog → preserve branch → flag retained.
+    assert fake_redis._kv.get("kv:demo/dev1/legacy_secret:enc") == b"1"
+
+
+def test_no_catalog_published_falls_back_to_preserve(client, fake_redis):
+    """No catalog at all (None from `load_catalog_dict`). Every
+    field falls through to the preserve branch. Same as the
+    pre-v1.6.5 behavior, since there's no catalog signal to
+    consult."""
+    fake_redis._kv["kv:demo/dev1/wifi_password:enc"] = b"1"
+
+    client.post("/app/demo/dev1", data={"wifi_password": "newsecret"},
+                follow_redirects=False)
+
+    assert fake_redis._kv.get("kv:demo/dev1/wifi_password:enc") == b"1"
 
 
 # ----- path safety -----

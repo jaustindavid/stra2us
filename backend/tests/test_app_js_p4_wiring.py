@@ -173,15 +173,31 @@ def test_innerHTML_only_in_telemetry_path():
     innerHTML elsewhere, review whether the values are escaped."""
     src = _read(_APP_JS)
     lines = src.splitlines()
+
+    # Locate the function bounds dynamically rather than hard-coding
+    # line numbers — pre-v1.6.5 the test used a magic 300<lineno<420
+    # band which broke when toggleReveal grew during the v1.6.5
+    # type-flip + peek-while-typing work. The function-bound search
+    # is robust to nearby additions.
+    start = None
+    end = None
+    for i, line in enumerate(lines):
+        if line.startswith("function renderActivityList"):
+            start = i + 1  # 1-indexed
+        elif start is not None and line.startswith("function "):
+            end = i  # exclusive — first line of the next function
+            break
+    assert start is not None and end is not None, (
+        "renderActivityList not found — has it been renamed or removed?"
+    )
+
     inner_html_lines = [
         (i + 1, line) for i, line in enumerate(lines)
         if ".innerHTML" in line
     ]
-    # All current uses must be in renderActivityList. Heuristic:
-    # the function is defined around line ~360 and ends around
-    # line ~410. Every innerHTML line should fall in that band.
     for lineno, _ in inner_html_lines:
-        assert 300 < lineno < 420, (
-            f"innerHTML at line {lineno} outside renderActivityList — "
-            "verify the interpolated value is escaped via escapeHtml"
+        assert start <= lineno <= end, (
+            f"innerHTML at line {lineno} outside renderActivityList "
+            f"(lines {start}-{end}) — verify the interpolated value "
+            "is escaped via escapeHtml"
         )

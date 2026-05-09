@@ -280,48 +280,71 @@ function bindRevealButtons() {
 async function toggleReveal(varName, btn) {
     const input = document.getElementById(`field-${varName}`);
     if (!input) return;
+
+    // Hide branch (currently revealed): flip back to type=password,
+    // restore the placeholder dots if the input is empty. Whether
+    // we got here via a server-fetch reveal or a peek-while-typing
+    // unmask, the symmetric flip is the same.
     if (btn.innerText === 'Hide') {
-        input.value = '';
-        input.placeholder = '••••••••';
-        // Re-mask: flip back to type=password so the placeholder dots
-        // render the way the page first loaded. Pre-fix this branch
-        // ran but the input was already type=password, so re-clicking
-        // Hide was a no-op visually — fine; it's the symmetric flip
-        // that makes the Reveal branch work.
         input.type = 'password';
+        if (input.value === '') {
+            input.placeholder = '••••••••';
+        }
         btn.innerText = 'Reveal';
         return;
     }
-    btn.disabled = true;
-    btn.innerText = '…';
-    try {
-        const path = `${encodeURIComponent(_state.appName)}/${encodeURIComponent(_state.deviceId)}/${encodeURIComponent(varName)}`;
-        const r = await fetch(`${ADMIN_API}/peek/kv/${path}`);
-        if (!r.ok) {
+
+    // Reveal branch. Two modes:
+    //   1. Server-fetch: the input was rendered for an existing
+    //      encrypted-non-write_only stored value (data-encrypted=true)
+    //      AND the input is currently empty (placeholder render).
+    //      Fetch the plaintext via the admin peek path, populate,
+    //      then flip to type=text.
+    //   2. Local toggle: the input has user-typed content (or is
+    //      a fresh widget:secret field with no stored encrypted
+    //      value). No fetch needed; just flip type=password →
+    //      type=text so the typed value becomes visible.
+    // Mode (2) is what bug #1 of v1.6.5 added: pre-v1.6.5 the user
+    // typing into a fresh widget:secret field had no way to peek
+    // at what they typed.
+    const isStoredEncrypted = input.dataset.encrypted === 'true';
+    const isEmpty = input.value === '';
+
+    if (isStoredEncrypted && isEmpty) {
+        // Mode 1: fetch from server.
+        btn.disabled = true;
+        btn.innerText = '…';
+        try {
+            const path = `${encodeURIComponent(_state.appName)}/${encodeURIComponent(_state.deviceId)}/${encodeURIComponent(varName)}`;
+            const r = await fetch(`${ADMIN_API}/peek/kv/${path}`);
+            if (!r.ok) {
+                btn.innerText = 'Reveal';
+                return;
+            }
+            const data = await r.json();
+            if (data.status === 'ok' && data.message !== null && data.message !== undefined) {
+                input.value = (typeof data.message === 'string')
+                    ? data.message
+                    : String(data.message);
+                input.placeholder = '';
+                input.type = 'text';
+                btn.innerText = 'Hide';
+            } else {
+                btn.innerText = 'Reveal';
+            }
+        } catch (e) {
             btn.innerText = 'Reveal';
-            return;
+        } finally {
+            btn.disabled = false;
         }
-        const data = await r.json();
-        if (data.status === 'ok' && data.message !== null && data.message !== undefined) {
-            input.value = (typeof data.message === 'string')
-                ? data.message
-                : String(data.message);
-            input.placeholder = '';
-            // Unmask: flip type=password → type=text so the populated
-            // plaintext is actually visible. Pre-fix the value landed
-            // in the input but the browser kept rendering it as
-            // dots because the type stayed `password` — the bug
-            // this branch is fixing.
-            input.type = 'text';
-            btn.innerText = 'Hide';
-        } else {
-            btn.innerText = 'Reveal';
-        }
-    } catch (e) {
-        btn.innerText = 'Reveal';
-    } finally {
-        btn.disabled = false;
+        return;
     }
+
+    // Mode 2: local toggle (no fetch). The user is peeking at
+    // their own typed input, or unmasking a default that's
+    // already in the form. Either way, just flip the type.
+    input.type = 'text';
+    btn.innerText = 'Hide';
 }
 
 // =====================================================================

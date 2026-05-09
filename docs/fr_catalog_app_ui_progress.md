@@ -1609,12 +1609,19 @@ The catalog at `tools/examples/critterchron_v2.s2s.yaml:106-115`
 also lints clean (it has the full triplet on `wifi_password`),
 useful as a larger known-good reference.
 
-### v1.6.5 — Reveal flow + Catalogs filter + admin mobile shell *(2026-05-09)*
+### v1.6.5 — Reveal flow + Catalogs filter + admin mobile shell + customer-page catalog-honors *(2026-05-09)*
 
-Three small, independent fixes bundled because each is
-individually trivial and bundling minimizes deploy/promote
-overhead. Branch off `main`, three commits (one per fix), single
-deploy/promote.
+Five fixes bundled into one release; the latter two emerged
+during staging verification of the first three when a mobile
+walkthrough surfaced two related catalog-intent gaps. Branch
+off `main`, four commits (the catalog-honors pair shares one
+commit because they share a theme and the same files):
+
+1. Reveal-button mask fix
+2. Catalogs admin-view filter
+3. Admin-shell mobile responsive
+4. Customer-page honors the catalog (Reveal-on-empty-secret +
+   form-submit-encrypts-when-catalog-says-so)
 
 **Reveal-button stays masked after click.** Customer-page bug:
 clicking Reveal on an encrypted-non-write_only password field
@@ -1672,24 +1679,112 @@ pass" (modal sizing on narrow viewports, table overflow,
 multiple breakpoints, real-device verification) is deferred
 until a real pain point surfaces or a release has bandwidth.
 
-**Tests.** Backend 261/261 unchanged — no backend changes, no
-JS tests for the reveal-toggle or the kv_scan filter (these
-are surfaced visually). The mobile shell is verified by
-DevTools mobile emulation + the operator's own phone walkthrough.
+**Customer-page catalog-honors fixes (the late additions).**
+Surfaced during the v1.6.5 staging verification when the
+operator deleted the wifi_password keys for a device, refreshed
+the customer page, and observed two issues:
 
-**Rollout.** Three commits on a single branch
-(`v1.6.5-bundle` or similar), individually revertable.
+* *Bug #1 — peek-while-typing.* The form rendered an empty
+  `<input type="password">` (correct, given `widget: secret`)
+  but with no toggle to peek at typed characters. Modern
+  password UIs offer a show/hide button by convention; the
+  customer-page didn't, so the customer typed blind.
+* *Bug #2 — form-submit doesn't encrypt.* On submit, the new
+  value landed in `kv:<app>/<device>/wifi_password` plaintext
+  despite the catalog declaring `encrypted: true`. Root cause:
+  `routes_app_form.py` previously **preserved** the existing
+  `:enc` sidecar across writes ("if it was encrypted before,
+  keep it encrypted") — but a freshly-deleted record has no
+  prior sidecar, so the new write got plaintext. The catalog's
+  `encrypted: true` was advisory metadata, not enforced.
+
+Both root-cause back to the same principle: **the catalog's
+intent should drive the customer-page write path, not be
+inferred from prior storage state.** Fixed:
+
+* `backend/src/api/routes_app_form.py`: form-submit now loads
+  the catalog (via `load_catalog_dict` from `routes_app_theme`)
+  and consults each var's `encrypted` field. Catalog true →
+  set `:enc=1` unconditionally. Catalog false (or implicitly
+  not set) → clear `:enc`. Field absent from catalog (stale
+  POST after a republish that removed the field) → fall back
+  to the pre-v1.6.5 "preserve" behavior so a vanishing field
+  doesn't silently strip encryption from data still legitimately
+  stored. Module docstring updated to reflect the contract.
+* `backend/src/services/page_renderer.py`: also emit a
+  Reveal/Hide button next to any `widget: secret` field, even
+  when there's no encrypted value to fetch. Skipped for
+  `write_only` fields (those deliberately render without any
+  read-back affordance).
+* `backend/src/static/app/app.js:toggleReveal`: now handles
+  two modes. Mode 1 (existing): input has `data-encrypted=true`
+  AND is empty → fetch via `/peek/kv/`, populate, flip to
+  type=text (the v1.6.5 type-flip fix above). Mode 2 (new):
+  input has user-typed content (or no stored encrypted value)
+  → just flip type=password ↔ type=text, no fetch.
+  The Hide branch no longer wipes the input value — the original
+  wipe was a side effect of the value-clearing implementation,
+  but in the peek-while-typing case wiping the user's input on
+  Hide is unacceptable. Re-masking via type-flip alone is the
+  cleaner symmetric operation.
+
+**Connection to broader principle.** This is one half of the
+"catalog as authoritative contract" theme. The other half — CLI
+`stra2us set` honoring the catalog's `encrypted:` rather than
+the operator's `--encrypted` flag — is filed in `TODO.md` as
+a separate scope (small, future release). v1.6.5 closes the
+customer-page leg; the CLI leg is queued.
+
+**Tests.** Backend 261 → 265 (+4):
+
+* `test_catalog_encrypted_true_sets_enc_flag` — bug #2's
+  regression case. Catalog says encrypted, no prior sidecar,
+  fresh submit → `:enc=1` after.
+* `test_catalog_encrypted_false_clears_stale_enc_flag` — the
+  inverse. Catalog now says not-encrypted, stale `:enc=1`
+  sidecar from a previous catalog version → cleared after submit.
+* `test_field_absent_from_catalog_preserves_enc_flag` — the
+  fallback case. Field not in catalog → preserve prior flag
+  rather than clobbering it (defends against a republish that
+  removed the field stripping encryption from extant data).
+* `test_no_catalog_published_falls_back_to_preserve` — the
+  "no catalog at all" baseline. Same as pre-v1.6.5 behavior.
+
+The existing `test_innerHTML_only_in_telemetry_path` heuristic
+broke because v1.6.5's `toggleReveal` expansion shifted line
+numbers; rewrote it to find `renderActivityList`'s function
+bounds dynamically rather than hard-coding magic line numbers.
+
+No JS tests for the reveal-toggle or the kv_scan filter (these
+are surfaced visually). The mobile shell is verified by DevTools
+mobile emulation + the operator's own phone walkthrough.
+
+**Rollout.** Four commits on a single branch (`v1.6.5-bundle`
+or similar), individually revertable. The catalog-honors pair
+(bug #1 + #2) shares one commit because the two changes are
+themed together and touch overlapping files.
 Verification path:
 
-1. Customer page Reveal: open a `/app/<app>/<device>/...` page
-   with a non-write_only encrypted field, click Reveal, confirm
-   plaintext is visible (not dots). Click Hide, confirm masking
-   returns.
-2. Catalogs admin tab with an app that has assets: confirm
+1. Customer page Reveal (existing stored encrypted value):
+   open a `/app/<app>/<device>/...` page with a stored
+   encrypted-non-write_only field, click Reveal, confirm
+   plaintext is visible. Click Hide, confirm masking returns.
+2. Customer page peek-while-typing (no stored value): on a
+   freshly-deleted secret field, confirm the Reveal button
+   exists. Type a value into the masked input, click Reveal,
+   confirm typed characters become visible. Click Hide,
+   confirm typed value is preserved (NOT wiped) and re-masked.
+3. Customer page form-submit-encrypts: with a catalog field
+   declared `encrypted: true` and the device's `:enc` sidecar
+   absent, type a value and submit. Inside the staging
+   container: `redis-cli GET kv:<app>/<device>/<var>:enc`
+   should return `"1"`. Pre-v1.6.5 this would have returned
+   nil (the bug).
+4. Catalogs admin tab with an app that has assets: confirm
    exactly one row per app, not N+1. Open a catalog, confirm
    the assets are still listed in the detail pane (filter only
    affects the list view, not the detail).
-3. Admin shell on a phone (or DevTools < 720px): confirm the
+5. Admin shell on a phone (or DevTools < 720px): confirm the
    sidebar is a top bar, nav-links scroll horizontally, content
    gets the rest of the viewport.
 
