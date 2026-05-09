@@ -4,10 +4,91 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from core.redis_client import get_redis_client
 from core.security import sign_payload, kvenc_xor, KVENC_EXT_TYPE
 import msgpack
+import yaml
 from .dependencies import verify_device_request, check_acl
 import time
 
 router = APIRouter()
+
+
+def _is_catalog_yaml_key(key: str) -> bool:
+    """Match the catalog YAML key shape `_catalog/<app>` exactly.
+
+    Catalog YAML lives at exactly two segments under the reserved
+    `_catalog/` namespace. Asset bytes / meta / index live at
+    `_catalog/<app>/_assets/...` (3+ segments) and aren't subject
+    to YAML validation — they're opaque bytes.
+    """
+    parts = key.split("/")
+    return len(parts) == 2 and parts[0] == "_catalog" and bool(parts[1])
+
+
+def _validate_catalog_yaml_upload(packed_body: bytes) -> None:
+    """Minimum-viable server-side catalog gate (followup #4 from
+    `docs/fr_catalog_app_ui_progress.md`).
+
+    The CLI's `catalog publish` runs full `stra2us_cli.catalog_lint`
+    before posting; this gate catches the cases that bypass the
+    CLI — raw-KV-editor mistakes, scripts that POST to /kv/ directly,
+    older CLI versions without the lint integration.
+
+    **Minimum-viable scope.** This gate validates *structural*
+    catalog shape (parses as YAML, top-level is a dict, has `app`
+    + `vars`). It does NOT yet run the FR's full lint table
+    (hex colors, font allowlist, asset references, etc). Full
+    integration is followup #2 (build-context consolidation) —
+    once `stra2us_cli` is importable from the backend, swap this
+    minimum gate for `lint_catalog(...)`.
+
+    Raises HTTPException(400) on malformed payloads. Catalog
+    publishes that pass this gate but fail the FR's deeper lint
+    rules will still render incorrectly client-side; the renderer's
+    defense-in-depth (re-validation in the theme serializer, the
+    widget renderer's safe defaults, etc.) handles those.
+    """
+    # Body is msgpack-packed by the CLI client.put helper; recover
+    # the YAML text first.
+    try:
+        text = msgpack.unpackb(packed_body, raw=False)
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail="catalog upload: payload is not valid msgpack",
+        )
+    if not isinstance(text, str):
+        raise HTTPException(
+            status_code=400,
+            detail="catalog upload: payload must be a YAML string "
+                   f"(got {type(text).__name__})",
+        )
+    try:
+        doc = yaml.safe_load(text)
+    except yaml.YAMLError as e:
+        # Strip newlines from the YAML library's verbose message
+        # so it fits in an HTTP detail line.
+        msg = str(e).replace("\n", " ")[:200]
+        raise HTTPException(
+            status_code=400,
+            detail=f"catalog upload: malformed YAML — {msg}",
+        )
+    if not isinstance(doc, dict):
+        raise HTTPException(
+            status_code=400,
+            detail="catalog upload: top-level must be a mapping "
+                   f"(got {type(doc).__name__})",
+        )
+    for required in ("app", "vars"):
+        if required not in doc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"catalog upload: missing required top-level "
+                       f"`{required}:` key",
+            )
+    if not isinstance(doc["vars"], dict):
+        raise HTTPException(
+            status_code=400,
+            detail="catalog upload: `vars:` must be a mapping",
+        )
 
 MSGPACK_MT = "application/x-msgpack"
 
@@ -192,6 +273,18 @@ async def write_kv(
                 msgpack.unpackb(body)
         except Exception:
             raise HTTPException(status_code=400, detail="Invalid MessagePack payload")
+
+    # Server-side catalog YAML validation (followup #4 from the
+    # catalog-app-ui FR). Catalog YAML uploads land at
+    # `_catalog/<app>` exactly; asset writes (`_catalog/<app>/_assets/...`)
+    # bypass this since they're opaque bytes. The CLI's `catalog
+    # publish` already lints; this gate covers raw-KV-editor
+    # mistakes, scripts that bypass the CLI, and older CLI
+    # versions without the lint integration. See
+    # `_validate_catalog_yaml_upload` for the minimum-viable scope
+    # + post-#2 upgrade path.
+    if _is_catalog_yaml_key(key) and len(body) > 0:
+        _validate_catalog_yaml_upload(body)
 
     redis = get_redis_client()
     await redis.set(f"kv:{key}", body)

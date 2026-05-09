@@ -120,7 +120,7 @@ fields:
     type: str
     default: clock
     description: "What the display shows when idle"
-    enum: [clock, weather, photo, off]
+    enum: [clock, weather, photo, "off"]
 ```
 
 That's the entire ergonomic ask: one extra line per hint, no
@@ -183,7 +183,7 @@ enum:
   - {value: clock, label: "Clock face"}
   - {value: weather, label: "Weather"}
   - {value: photo, label: "Photo carousel"}
-  - {value: off, label: "Off"}
+  - {value: "off", label: "Off"}
 ```
 
 The simple form is treated as the object form with `label == value`.
@@ -553,7 +553,7 @@ fields:
   display_mode:
     type: str
     default: clock
-    enum: [clock, weather, photo, off]
+    enum: [clock, weather, photo, "off"]
     help: "What the display shows when idle"
 
   ir_brightness:

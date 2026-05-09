@@ -69,17 +69,18 @@ function _ensureOriginal(el) {
 
 // Bind the dirty + live-validity listeners to a single field.
 // Idempotent: already-bound fields are a no-op.
+//
+// `data-valid` is intentionally NOT set on first paint — the FR's
+// "Validation" section says feedback happens "as the user types,"
+// which means the field stays neutral (no green / no red) until
+// the first input event. The base stylesheet's `[data-valid="..."]`
+// rules only fire once the JS sets the attribute on a keystroke.
+// This avoids the noisy first-paint state where every valid
+// pattern field gets the green-border treatment by default.
 function _bindField(el) {
   if (el.hasAttribute(BOUND_ATTR)) return;
   _ensureOriginal(el);
   el.dataset.dirty = "false";
-
-  // Initial pattern validity — without this the field renders as
-  // neither valid nor invalid until the first keystroke. Gives the
-  // stylesheet something to style on first paint.
-  if (el.hasAttribute("pattern") || el.hasAttribute("required")) {
-    el.dataset.valid = el.checkValidity() ? "true" : "false";
-  }
 
   const onChange = () => {
     el.dataset.dirty = "true";

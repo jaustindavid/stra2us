@@ -137,18 +137,30 @@ class Var(BaseModel):
     def _reject_yaml_truthy_enum(cls, v):
         # YAML 1.1's `off`/`on`/`yes`/`no` parse as Python booleans,
         # which then coerce silently into `int(0)`/`int(1)` via this
-        # field's `str | int | EnumChoice` union. A catalog author
-        # writing `enum: [clock, weather, off]` would get `0` in
-        # place of the string `"off"` — a footgun.
-        # Reject and tell them to quote.
+        # field's `str | int | EnumChoice` union (or via
+        # EnumChoice's `value: str | int` for the object form). A
+        # catalog author writing `enum: [clock, weather, off]` or
+        # `- {value: off, label: "Off"}` would get `0` in place of
+        # the string `"off"` — a footgun. Reject and tell them to
+        # quote.
         if isinstance(v, list):
             for i, entry in enumerate(v):
+                # Simple form: bare scalar
                 if isinstance(entry, bool):
                     raise ValueError(
                         f"enum[{i}]: bare YAML boolean ({entry!r}) — quote "
                         f"the value (likely 'off'/'on'/'yes'/'no'); these "
                         f"are YAML 1.1 truthy literals that silently "
                         f"become Python bools"
+                    )
+                # Object form: {value: <bool>, label: ...}
+                if isinstance(entry, dict) and isinstance(entry.get("value"), bool):
+                    raise ValueError(
+                        f"enum[{i}].value: bare YAML boolean "
+                        f"({entry['value']!r}) — quote the value "
+                        f"(likely 'off'/'on'/'yes'/'no'); these are "
+                        f"YAML 1.1 truthy literals that silently become "
+                        f"Python bools"
                     )
         return v
 

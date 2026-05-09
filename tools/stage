@@ -22,7 +22,11 @@
 #                        Idempotent: skips users already in htpasswd + Redis.
 #                        --force re-provisions regardless of existing state.
 #   deploy [ref]         git pull (or checkout <ref>), rebuild image,
-#                        restart stack, wait for tunnel
+#                        restart stack, wait for tunnel.
+#                        For a branch never checked out locally on the
+#                        staging host, pass the fully-qualified remote
+#                        ref (e.g. `origin/my-branch`) — git's `-B`
+#                        won't auto-DWIM a bare branch name.
 #   promote <tag>        Promote prod to <tag>: fetch tags in $PROD_DIR,
 #                        checkout -B deploy <tag>, rebuild + restart
 #                        prod stack, wait for tunnel. Tag must already

@@ -183,6 +183,25 @@ def test_unknown_ui_key_rejected(tmp_path):
         load_catalog(p)
 
 
+def test_yaml_truthy_enum_value_in_object_form_rejected(tmp_path):
+    """Same YAML 1.1 footgun as the simple form, but inside an
+    EnumChoice's `value:`. Without the validator, `value: off`
+    would silently coerce to `int(0)` via EnumChoice's
+    `value: str | int` union."""
+    p = _write(tmp_path, """
+        app: testapp
+        vars:
+          mode:
+            type: string
+            scope: [app]
+            enum:
+              - {value: clock, label: "Clock face"}
+              - {value: off, label: "Off"}
+    """)
+    with pytest.raises(CatalogError, match="YAML 1.1"):
+        load_catalog(p)
+
+
 def test_yaml_truthy_enum_value_rejected(tmp_path):
     """YAML 1.1's `off`/`on`/`yes`/`no` parse as booleans, which would
     coerce silently into 0/1 via the `str | int | EnumChoice` union.
