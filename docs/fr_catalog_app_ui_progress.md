@@ -1478,7 +1478,7 @@ Tag `v1.6.3` on the verified commit, push tag, promote.
 that accumulate during fast feature work and benefit from a periodic
 "sweep the trivials" pass.
 
-### v1.6.4 — catalog-lint secret-pairing warnings *(2026-05-09)*
+### v1.6.4 — catalog-lint secret-pairing warnings + `catalog lint` subcommand *(2026-05-09)*
 
 Catalog-author-facing companion to v1.6.3. Filed after a deployed
 catalog had `encrypted: true` on a Wi-Fi password field but no
@@ -1486,6 +1486,10 @@ catalog had `encrypted: true` on a Wi-Fi password field but no
 plain text input that displayed the stored value on every page
 load. Operator caught it visually; the lint would have caught it
 at publish time.
+
+Two pieces ship together because they're useless apart: the
+warnings without a way to invoke the lint short of a full publish,
+or the lint subcommand without anything new to surface.
 
 **Background.** Three independent primitives govern a "this field
 holds a password / API key / token" treatment:
@@ -1518,12 +1522,47 @@ real):
 Each warning silenceable by completing the triplet. An author who
 genuinely wants the partial combination ignores the warning.
 
-**Tests.** Tools test count 168 → 174 (+5 + 1 already present):
+**`stra2us catalog lint` subcommand.** New verb in
+`tools/stra2us_cli/cli.py:cmd_catalog_lint`, registered in the
+`catalog` subparser group between `list` and `publish`. Loads the
+catalog, runs the same `lint_catalog` + `lint_asset_bundle`
+passes as `cmd_catalog_publish`, and prints issues — but stops
+before any network call. Mirrors publish's exit codes:
+
+* `0` — clean (warnings printed to stderr, but non-blocking, same
+  as publish). A confirmation line `<app>: lint OK (N warnings)`
+  goes to stdout so an interactive operator gets a positive
+  signal rather than silence.
+* `5` — at least one lint error. Same exit code publish uses for
+  the same condition, so a CI script can branch identically on
+  `lint` and `publish`.
+* `6` — asset-pipeline failure (sanitization, bundle cap). Mirrors
+  publish.
+
+Filed during the v1.6.4 verification step: the operator ran
+`stra2us --catalog test.yaml catalog list` expecting the new
+warnings to fire, and got just the variable table instead.
+`catalog list` is parse-and-print, only `catalog publish` runs
+lint, and there was no third option for "run lint without
+uploading." The new subcommand closes that gap.
+
+**Tests.** Tools test count 168 → 178 (+10 across two files):
+
+`tools/tests/test_catalog_lint.py` (+5 — secret-pairing logic):
 * `test_secret_pairing_encrypted_without_widget_secret_warns`
 * `test_secret_pairing_widget_secret_without_encrypted_warns`
 * `test_secret_pairing_widget_secret_without_write_only_warns`
 * `test_secret_pairing_full_triplet_clean` (happy path: all three set)
 * `test_secret_pairing_no_secret_no_encrypted_no_warnings` (none set)
+
+`tools/tests/test_publish_lint.py` (+4 — `catalog lint` CLI):
+* `test_lint_clean_catalog_returns_zero` (exit 0 + confirmation line)
+* `test_lint_broken_catalog_returns_5` (exit 5 + error to stderr)
+* `test_lint_warning_does_not_fail` (exit 0 even with warnings,
+  warning text goes to stderr)
+* `test_lint_dispatch_via_main` (end-to-end through
+  `main([...catalog, lint])` — confirms subparser wiring, not
+  just the cmd-function being callable directly)
 
 Backend untouched (lint runs in the CLI publish path); 261 backend
 tests still green.
@@ -1541,11 +1580,13 @@ separate so the changelog reads as cause-and-effect.
 (see `Dockerfile`'s `pip install /tools` line), so the new lint
 ships to staging + prod via the normal image-rebuild path.
 
-To verify: re-publish the critterchron catalog from staging
-(`stra2us catalog publish ...`). Any field missing a leg of the
-triplet surfaces a warning. The example bundle at
-`tools/examples/critterchron_v2.s2s.yaml:106-115` already has the
-full triplet, so it lints clean.
+To verify: from a staging container, run
+`stra2us --catalog <path> catalog lint` against any catalog YAML.
+Any field missing a leg of the secret triplet surfaces a warning;
+clean catalogs print `<app>: lint OK (0 warnings)`. The example
+bundle at `tools/examples/critterchron_v2.s2s.yaml:106-115`
+already has the full triplet on `wifi_password`, so it lints
+clean — useful as a known-good fixture.
 
 ### What's left
 

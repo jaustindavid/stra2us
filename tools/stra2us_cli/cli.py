@@ -5,6 +5,9 @@
 Verbs:
 
     stra2us catalog [list]                  Print the variable table. No network.
+    stra2us catalog lint                    Run the publish-time lint without
+                                            uploading. Same gate as `publish`.
+                                            Exit 5 on errors, 0 otherwise.
     stra2us catalog publish                 Upload the catalog YAML to the server
                                             at _catalog/{app}. Validates first.
     stra2us catalog fetch [<app>]           Download the stashed catalog for <app>
@@ -136,6 +139,66 @@ def cmd_catalog_list(args: argparse.Namespace) -> int:
     print("  " + "  ".join("-" * w for w in widths))
     for r in rows:
         print(fmt.format(*r))
+    return 0
+
+
+def cmd_catalog_lint(args: argparse.Namespace) -> int:
+    """Run the publish-time lint without actually publishing.
+
+    Loads the catalog YAML, gathers the asset bundle if there's a
+    sibling `_assets/` directory, and runs the same `lint_catalog` /
+    `lint_asset_bundle` passes that `cmd_catalog_publish` does — but
+    stops before any network call. Useful for catalog authors
+    iterating on a YAML before they have server creds, and for
+    verifying lint-rule changes against a local file.
+
+    Exit codes:
+      0  — no lint errors (warnings printed, but treated as
+           non-blocking — same as publish's behavior).
+      5  — at least one lint error (matches the publish exit code
+           for the same condition).
+      6  — asset-pipeline failure (sanitization rejected an SVG,
+           bundle cap exceeded, etc.). Mirrors publish's exit
+           code so a CI script can check `lint` and `publish` the
+           same way.
+    """
+    path = _catalog_path(args)
+    cat = load_catalog(path)
+
+    # Same asset-discovery + sanitize pass as publish. Done here too
+    # because:
+    #   * the asset-listing feeds the catalog lint (theme.logo_asset
+    #     existence check, unused-asset warning).
+    #   * `lint_loaded(loaded)` runs the per-bundle lint (size caps,
+    #     content-type allowlist, filename shape).
+    # Mirroring publish exactly is the point — anything `lint` accepts
+    # should be exactly what `publish` accepts (and vice versa).
+    asset_dir = path.parent / "_assets"
+    try:
+        loaded = discover_assets(asset_dir) if asset_dir.is_dir() else []
+    except PublishError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 6
+
+    asset_listing = {a.filename for a in loaded} if asset_dir.is_dir() else None
+
+    issues = lint_catalog(cat, asset_listing=asset_listing)
+    issues.extend(lint_loaded(loaded))
+    errs = lint_errors(issues)
+    warns = lint_warnings(issues)
+
+    for w in warns:
+        print(f"warning: {w.path}: {w.message}", file=sys.stderr)
+    if errs:
+        print("error: catalog lint failed:", file=sys.stderr)
+        for e in errs:
+            print(f"  {e.path}: {e.message}", file=sys.stderr)
+        return 5
+
+    # Clean. Print a one-line confirmation to stdout (warnings already
+    # went to stderr) so an operator running interactively gets a
+    # positive signal rather than silence.
+    print(f"{cat.app}: lint OK ({len(warns)} warning{'' if len(warns) == 1 else 's'})")
     return 0
 
 
@@ -547,6 +610,10 @@ def _build_parser() -> argparse.ArgumentParser:
     cat_sub = sp_cat.add_subparsers(dest="catalog_verb", required=False)
     cat_sub.add_parser("list", help="print the catalog table (default)")
     cat_sub.add_parser(
+        "lint",
+        help="run the publish-time lint without uploading (no network)",
+    )
+    cat_sub.add_parser(
         "publish",
         help=f"upload catalog to {CATALOG_STASH_PREFIX}/<app> on the server",
     )
@@ -636,6 +703,8 @@ def _dispatch_catalog(args: argparse.Namespace) -> int:
     verb = args.catalog_verb or "list"
     if verb == "list":
         return cmd_catalog_list(args)
+    if verb == "lint":
+        return cmd_catalog_lint(args)
     if verb == "publish":
         return cmd_catalog_publish(args)
     if verb == "fetch":

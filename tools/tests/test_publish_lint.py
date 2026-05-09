@@ -283,3 +283,73 @@ def test_unused_asset_warns_does_not_fail(tmp_path, stub_client, capsys):
     err = capsys.readouterr().err
     assert "stray.png" in err
     assert "warning" in err
+
+
+# ----- catalog lint subcommand (v1.6.4) -----------------------------
+# `cmd_catalog_lint` runs the same lint passes as publish but stops
+# before the network call. These tests pin the exit-code contract
+# (0 clean, 5 errors, 6 asset-pipeline failure — same as publish)
+# and confirm the dispatch is wired through `_dispatch_catalog`.
+# No `stub_client` fixture: the lint command never builds a client,
+# and the test should fail loudly if it ever does.
+
+def test_lint_clean_catalog_returns_zero(tmp_path, capsys):
+    p = _write_catalog(tmp_path, """
+        app: demo
+        vars:
+          x: {type: int, scope: [app], default: 1}
+    """)
+    rc = cli_module.cmd_catalog_lint(_args(p))
+    assert rc == 0
+    out = capsys.readouterr().out
+    # Confirmation line so an interactive operator gets a positive
+    # signal instead of silence.
+    assert "demo: lint OK" in out
+
+
+def test_lint_broken_catalog_returns_5(tmp_path, capsys):
+    """Same broken-catalog shape as `test_broken_catalog_fails_before_publish`
+    above — `widget: secret` on a non-string field is a lint error."""
+    p = _write_catalog(tmp_path, """
+        app: demo
+        vars:
+          n: {type: int, scope: [app], widget: secret}
+    """)
+    rc = cli_module.cmd_catalog_lint(_args(p))
+    assert rc == 5
+    err = capsys.readouterr().err
+    assert "catalog lint failed" in err
+    assert "vars.n.widget" in err
+
+
+def test_lint_warning_does_not_fail(tmp_path, capsys):
+    """Warnings print to stderr but don't change the exit code —
+    matches publish's "block on errors, pass through warnings" contract."""
+    p = _write_catalog(tmp_path, """
+        app: demo
+        vars:
+          wifi:
+            type: string
+            scope: [app]
+            encrypted: true
+    """)
+    rc = cli_module.cmd_catalog_lint(_args(p))
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "demo: lint OK (1 warning)" in captured.out
+    assert "vars.wifi.encrypted" in captured.err
+    assert "without `widget: secret`" in captured.err
+
+
+def test_lint_dispatch_via_main(tmp_path, capsys):
+    """End-to-end through `main(['catalog', 'lint', '--catalog', PATH])`,
+    confirming the subparser + dispatch wiring (not just the cmd_*
+    function being callable directly)."""
+    p = _write_catalog(tmp_path, """
+        app: demo
+        vars:
+          x: {type: int, scope: [app]}
+    """)
+    rc = cli_module.main(["--catalog", str(p), "catalog", "lint"])
+    assert rc == 0
+    assert "demo: lint OK" in capsys.readouterr().out
