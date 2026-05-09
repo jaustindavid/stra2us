@@ -19,6 +19,14 @@
   stamped with `Math.floor(Date.now() / 1000)` in
   `monitorClear()`; the polling fetch's render loop skips
   messages with `received_at <= monitorClearedAfter`.
+  **Hotfix v1.6.2 (2026-05-09):** v1.6.1 stamped the cutoff
+  in *every* caller of `monitorClear`, including the chip-
+  toggle handler and `openMonitor(topic)` from the dashboard
+  — so opening Monitor on a topic always started blank instead
+  of showing the recent stream tail. Split into `monitorClear`
+  (stamps cutoff, wired to the Clear button only) and
+  `_monitorResetFeed` (soft reset — DOM + `seenIds`, no
+  cutoff stamp) used by the two internal callers.
 
 - ~~**Intermittent "Sign-in session expired or was forged."**~~
   Instrumented 2026-05-09 in v1.6.1. The CSRF-mismatch branch
@@ -188,35 +196,32 @@
   Bundles cleanly: a single `is_global_admin(acl)` helper covers
   all three checks. About a half-day of work end-to-end.
 
-- **Device picker dedupe doesn't recognize wildcard coverage.** A
-  user with `*:rw` (or `<app>:rw` covering a whole app) opens the
-  device picker and sees every device as un-granted, even though the
-  wildcard logically covers all of them. Should treat `*` and
-  parent-prefix matches as "already granted" in the picker's
-  disabled-checkbox logic. Implementation: replace the exact-string
-  dedupe in `confirmDevicePicker` / the rendering predicate
-  (`aclCurrentPermissions.some(p => p.prefix === token)`) with a
-  coverage check that mirrors the backend's `_prefix_matches`
-  semantics (`*`, exact, or parent-prefix). Same predicate also
-  improves the "(already granted)" labeling in the picker.
+- ~~**Device picker dedupe doesn't recognize wildcard coverage.**~~
+  Landed 2026-05-09 in v1.6.3. New `_aclPrefixCovers(prefix, path)`
+  helper in `backend/src/static/app.js` mirrors the backend's
+  `_prefix_matches` (`*`, exact, parent-prefix). Three sites
+  switched from `p.prefix === token` to
+  `_aclPrefixCovers(p.prefix, token)`: the picker's "already
+  granted" rendering predicate, and the two dedupe checks in
+  `confirmDevicePicker` (the `<app>/<device>:rw` push and the
+  `<app>/public:r` push). A user with `*:rw` now sees every
+  device as already granted, and re-applying the picker no
+  longer pushes redundant rows.
 
-- **Device picker modal overflows the viewport with many devices.**
-  In Admin Users → Edit ACL → "+ Select Devices", a long device list
-  pushes the modal beyond the bottom of the screen — the picker list
-  has `max-height: 50vh` but the surrounding modal-content has no
-  height constraint, so headers + hints + the 50vh list + actions
-  can total >100vh. Fix: cap `.modal-content` (or just `.acl-modal-content`)
-  at something like 90vh, make it `display: flex; flex-direction: column`,
-  let the list section grow with `flex: 1 1 auto` so it shrinks to
-  fit available space. ~5 lines of CSS.
+- ~~**Device picker modal overflows the viewport with many devices.**~~
+  Landed 2026-05-09 in v1.6.3. `#devicePickerModal .modal-content`
+  capped at `max-height: 90vh` + `display: flex; flex-direction:
+  column`; `#devicePickerModal .device-picker-list` switched to
+  `flex: 1 1 auto; min-height: 0` so the list shrinks instead of
+  pushing the action buttons past the viewport bottom. Scoped to
+  the device picker only — other modals are unchanged.
 
-- **"Last seen just now ago" on single-device screen.** Time-format
-  bug: the relative-time formatter is concatenating "just now" with
-  "ago" when the duration is sub-threshold. Should be "just now"
-  (no "ago") for very recent events, and "<N> <unit> ago" for older
-  ones. Lives somewhere in `backend/src/static/app.js` or the
-  `/app/` view templates — short grep for "just now" / "ago" should
-  find it.
+- ~~**"Last seen just now ago" on single-device screen.**~~ Landed
+  2026-05-09 in v1.6.3. Moved the " ago" suffix into `formatAge`
+  (`backend/src/static/app/app.js`) so the sub-5s case keeps
+  returning "just now" while the 5s+ branches return "<N><unit>
+  ago"; both callers (`Last seen ${...}` and the activity-row
+  `<span class="activity-when">`) dropped their hardcoded " ago".
 
 - **Scoped admins can't see Activity Logs view.** A non-superuser
   admin (e.g. `austin`, ACL has `critterchron/...` prefixes but no

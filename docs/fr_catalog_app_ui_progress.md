@@ -1338,6 +1338,146 @@ Carried over to `TODO.md` rather than fixed in this pass:
    discipline still matters for explicit cache-buster behavior.
    Filed informally in `csp_admin_audit.md`.
 
+### v1.6.2 hotfix — Monitor tab cleared on every open *(2026-05-09)*
+
+v1.6.1's "Monitor Clear cursor" change (followup item, in TODO
+near-term) introduced a regression: opening Monitor on a topic
+from the dashboard always rendered an empty feed, instead of
+showing the recent stream tail. Reproducer: dashboard → click
+Monitor on a topic → let messages roll → back to dashboard →
+click Monitor on a different topic → starts blank.
+
+**Root cause.** `monitorClear()` stamps `monitorClearedAfter`
+to a "skip messages older than now" cutoff. v1.6.1 routed three
+callers through the same function:
+
+1. The Clear button (`data-action="monitorClear"`) — *correct*,
+   the operator wants forward-only.
+2. The topic chip-toggle handler — *wrong*, a filter change
+   should soft-reset and let the next poll backfill.
+3. `openMonitor(topic)` invoked from the dashboard's "Monitor"
+   button — *wrong*, the user just landed and wants the tail.
+
+(2) and (3) made the cutoff land at "now" right before the next
+poll, suppressing every message it returned.
+
+**Fix.** Split into two functions in `backend/src/static/app.js`:
+
+* `_monitorResetFeed()` — soft reset: clears `monitorFeed` DOM
+  + `monitorSeenIds`, **no cutoff stamp**.
+* `monitorClear()` — stamps `monitorClearedAfter`, then calls
+  `_monitorResetFeed()`.
+
+Chip-toggle and `openMonitor()` now call `_monitorResetFeed()`.
+The ACTIONS map's `monitorClear` entry still points at the
+cutoff-stamping `monitorClear()`, so the Clear button keeps its
+v1.6.1 behavior.
+
+**Rollout.** Branch off `main` with the fix → `tools/stage
+deploy origin/main` → verify the dashboard → Monitor flow shows
+the tail → tag `v1.6.2` on the verified commit → push tag →
+`tools/stage promote v1.6.2`. Single file changed
+(`backend/src/static/app.js`); 261 backend tests still green.
+
+**Lesson worth recording.** When a function gains side-effects
+(here: stamping a global cursor), audit *all* call sites — not
+just the one that motivated the change. The Clear button was
+the motivating caller; the other two callers were silent
+collateral.
+
+### v1.6.3 batch — three small UI fixes *(2026-05-09)*
+
+Three open `TODO.md` items bundled into one release because they're
+small, independent, and all touch the admin / customer UI surface
+without backend changes. Branch off `main`, single deploy/promote.
+
+**#10 — "Last seen just now ago" on single-device screen.** The
+relative-time formatter (`formatAge` in `backend/src/static/app/app.js`,
+the customer-facing surface) returned `"just now"` for sub-5s ages,
+but both call sites concatenated ` ago` after — yielding
+`"Last seen just now ago"`. Fix: move the ` ago` suffix into
+`formatAge` itself (each non-`just now` branch now returns the full
+phrase), and drop the hardcoded suffix from both callers
+(`Last seen ${formatAge(ageSec)}` on the status line + the
+`activity-when` span on telemetry rows). Function name unchanged
+to keep the diff minimal.
+
+**#9 — Device picker modal overflows viewport.** The picker
+(`Admin Users → Edit ACL → + Select Devices`) had a
+`.device-picker-list { max-height: 50vh }` but the surrounding
+`.modal-content` had no height cap, so on long device lists the
+title + hint + 50vh list + action buttons could total > 80vh
+(the window left by `.modal-content`'s `margin: 10% auto`),
+pushing Cancel / Add past the viewport bottom. Fix in
+`backend/src/static/styles.css`, scoped to `#devicePickerModal`
+so the global modal styles stay untouched:
+
+```css
+#devicePickerModal .modal-content {
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+}
+#devicePickerModal .device-picker-list {
+    flex: 1 1 auto;
+    min-height: 0;
+}
+```
+
+The `min-height: 0` is the load-bearing line — flex items refuse to
+shrink below content size by default; without it, a long list still
+overflows the modal even after the cap.
+
+**#8 — Device picker dedupe ignores wildcard coverage.** A user
+with `*:rw` (or `<app>:rw`) opened the picker and saw every device
+as un-granted, because the dedupe predicate was strict equality
+(`p.prefix === token`). A wildcard or parent-prefix rule
+*logically* covers the device, even though the strings don't match.
+Symptom: confusing UI for global admins, plus `confirmDevicePicker`
+piling redundant `<app>/<device>:rw` rows in on top of an existing
+`*:rw`. Fix in `backend/src/static/app.js` (the admin surface):
+new `_aclPrefixCovers(prefix, path)` helper mirroring the backend's
+`_prefix_matches` (`api/dependencies.py:162`):
+
+```js
+function _aclPrefixCovers(prefix, path) {
+    if (!prefix) return false;
+    if (prefix === '*') return true;
+    if (prefix === path) return true;
+    return path.startsWith(prefix + '/');
+}
+```
+
+Three predicate sites switched from strict equality to
+`_aclPrefixCovers(p.prefix, token)`:
+1. The "already granted" rendering predicate in `openDevicePicker`
+   (disables the checkbox + appends "(already granted)").
+2. The `<app>/<device>:rw` dedupe in `confirmDevicePicker`.
+3. The `<app>/public:r` dedupe in `confirmDevicePicker`.
+
+**Tests.** No backend changes; 261 backend tests still green. Fixes
+are visual / interactive and verified by walking the device-picker
+flow on staging.
+
+**Rollout.** Branch `v1.6.3-ui-fixes` off `main`, three commits
+(one per fix) for individual revertability. Stage from
+`origin/v1.6.3-ui-fixes`, click through:
+
+1. Admin Users → Edit ACL → "+ Select Devices" with a long device
+   list — confirm Cancel + Add buttons stay visible at the modal
+   bottom (#9).
+2. Same picker, with a user that already has `*:rw` — confirm every
+   device shows "(already granted)" (#8).
+3. Customer page on a freshly-active device — confirm "Last seen
+   just now" (no trailing "ago"), and the activity tail shows
+   "1s ago", "5m ago", etc. (#10).
+
+Tag `v1.6.3` on the verified commit, push tag, promote.
+
+**Lessons.** None new — these are the kinds of small UI papercuts
+that accumulate during fast feature work and benefit from a periodic
+"sweep the trivials" pass.
+
 ### What's left
 
 Nothing on the catalog-app-ui FR's followup list. The
