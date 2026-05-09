@@ -202,6 +202,35 @@ async def activity_log_middleware(request: Request, call_next):
 
 
 @app.middleware("http")
+async def admin_cache_control_middleware(request: Request, call_next):
+    """Force `Cache-Control: no-cache` on `/admin/*` static
+    responses (P5 #1d followup). Browsers still keep the bytes
+    cached but always revalidate with the server before using
+    them — so a deploy that ships new admin JS/HTML/CSS reaches
+    operators on their next page load instead of after a manual
+    Shift+Reload.
+
+    Same shape of fix as P4's `Cache-Control: no-store` on the
+    customer page, but `no-cache` rather than `no-store` because
+    the admin shell is static (304-able) — letting the browser
+    keep the bytes between requests is the right perf trade. The
+    cost is one round-trip per file per session (the 304); for
+    typical admin file sizes that's microseconds.
+
+    Vendored assets (`/admin/_vendor/...`) get the same treatment
+    even though they're effectively immutable — the round-trip
+    cost is negligible and a uniform rule beats two-rule
+    bookkeeping. If `/admin/_vendor/inter/inter-latin.woff2`
+    revalidation ever shows up in perf logs, switch the vendor
+    path to `max-age=31536000, immutable`.
+    """
+    response = await call_next(request)
+    if request.url.path.startswith("/admin/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
+@app.middleware("http")
 async def perf_log_middleware(request: Request, call_next):
     """Times every dynamic request; appends to system:perf_log when
     total_ms >= STRA2US_PERF_LOG_THRESHOLD_MS. Defined last so it wraps

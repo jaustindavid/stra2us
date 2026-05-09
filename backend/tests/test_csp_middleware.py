@@ -191,6 +191,45 @@ def test_csp_report_endpoint_logs_violation(caplog):
 
 # ----- P5: actual main.py wiring -----
 
+def test_admin_paths_carry_no_cache():
+    """P5 #1d followup: `/admin/*` responses must set
+    `Cache-Control: no-cache` so a fresh deploy reaches operators
+    on next page load (vs. requiring a manual Shift+Reload —
+    which is exactly the bug we hit during the #1d walkthrough).
+    Same shape of fix as P4's `no-store` on the customer page,
+    different value because admin is static-shell and benefits
+    from 304-revalidate."""
+    import sys
+    sys.path.insert(0, "src")
+    import main
+    client = TestClient(main.app)
+
+    # Admin index — even on 401 (no auth in test) the middleware
+    # has already added the header.
+    r = client.get("/admin/")
+    assert r.headers.get("cache-control") == "no-cache"
+
+    # Vendored asset — same rule (uniform; perf cost negligible).
+    r = client.get("/admin/_vendor/js-yaml-4.1.0.min.js")
+    assert r.headers.get("cache-control") == "no-cache"
+
+
+def test_non_admin_paths_unchanged_by_admin_cache_middleware():
+    """The admin-cache header must not leak onto customer-facing
+    routes (which have their own `Cache-Control` rules — `no-store`
+    on `/app/<app>/<device>` from P4, `max-age=31536000, immutable`
+    on `/app/<app>/_assets/...` from P1, etc)."""
+    import sys
+    sys.path.insert(0, "src")
+    import main
+    client = TestClient(main.app)
+
+    r = client.get("/app/")
+    cc = r.headers.get("cache-control", "")
+    # Whatever the customer route returns, it must NOT be `no-cache`.
+    assert "no-cache" not in cc
+
+
 def test_main_app_enforces_csp_on_every_route():
     """Regression test for P5's wiring in main.py. Post #1d, every
     route ships enforcing CSP — customer-facing `/app/*` AND
