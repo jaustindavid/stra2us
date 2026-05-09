@@ -255,11 +255,27 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Content Security Policy. Ships in Report-Only on every route per
-# P0 of docs/fr_catalog_app_ui_plan.md — collect violations, no
-# customer-facing behavior change. P3 adds `/app/<app>/<device>/`
-# to `enforce_path_prefixes`; P5 flips the rest after the audit.
-app.add_middleware(CSPMiddleware)
+# Content Security Policy. Customer-facing `/app/*` surface ships
+# in **enforcing** mode (per P5 of docs/fr_catalog_app_ui_plan.md
+# + the FR's "CSP rollout" two-track plan) — built CSP-clean from
+# P0 onward, no inline scripts/handlers/styles, no external CDN
+# refs after P3's js-yaml drop. Admin/api routes stay in
+# Report-Only because the existing admin UI predates CSP and uses
+# inline `onclick=` handlers + inline styles + two CDN resources
+# (js-yaml, Google Fonts) that would generate a flood of
+# violations on flip. The admin cleanup is a separate effort
+# tracked in the P5 audit doc; flipping it requires:
+#   - converting ~55 inline event handlers to addEventListener
+#   - lifting inline `style=` attributes to CSS classes
+#   - self-hosting (or explicitly allowlisting) the two CDNs
+#   - end-to-end retesting the admin UI
+# Until that lands, admin/api keep accumulating Report-Only
+# telemetry under the `stra2us.csp` logger so any new violation
+# introduced by future admin changes shows up before flip.
+app.add_middleware(
+    CSPMiddleware,
+    enforce_path_prefixes=["/app/"],
+)
 app.include_router(csp_router, tags=["csp"])
 
 # Admin API

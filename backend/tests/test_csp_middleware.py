@@ -165,6 +165,30 @@ def test_csp_report_endpoint_logs_violation(caplog):
     assert any("csp_violation" in r.message for r in caplog.records)
 
 
+# ----- P5: actual main.py wiring -----
+
+def test_main_app_enforces_csp_on_customer_route():
+    """Regression test for P5's wiring in main.py. Customer-facing
+    `/app/*` ships enforcing; admin/api stay Report-Only until
+    the admin audit + cleanup land. If a future change drops the
+    `enforce_path_prefixes` argument, this test fails loudly so
+    the customer page doesn't silently regress to Report-Only."""
+    import sys
+    sys.path.insert(0, "src")
+    import main
+    client = TestClient(main.app)
+
+    # Customer-facing landing (public, no auth) — enforcing.
+    r = client.get("/app/")
+    assert "Content-Security-Policy" in r.headers
+    assert "Content-Security-Policy-Report-Only" not in r.headers
+
+    # Admin-facing /health — Report-Only (admin UI not yet audited).
+    r = client.get("/health")
+    assert "Content-Security-Policy-Report-Only" in r.headers
+    assert "Content-Security-Policy" not in r.headers
+
+
 def test_csp_report_endpoint_handles_unparsed_body():
     """A malformed body shouldn't 500; we record what we got and
     return 204 like the well-formed path."""
