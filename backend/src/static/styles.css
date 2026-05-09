@@ -704,6 +704,18 @@ tr.catalog-var-row:hover td { background: rgba(0, 240, 255, 0.06); }
 }
 
 /* --- Device picker (Phase 5b: select-not-type ACL editor) ---------- */
+/* v1.6.3: cap the picker's modal-content + make it flex column so the
+   list region shrinks instead of pushing the action buttons past the
+   viewport bottom. Pre-v1.6.3 the list was `max-height: 50vh` but the
+   surrounding modal-content had no height cap, so title + hint + 50vh
+   list + actions could total > 80vh (the window left by .modal-content's
+   `margin: 10% auto`) when the device list was long. Scoped to this
+   modal only — other modals use the unconstrained .modal-content rules. */
+#devicePickerModal .modal-content {
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+}
 .device-picker-list {
     max-height: 50vh;
     overflow-y: auto;
@@ -712,6 +724,16 @@ tr.catalog-var-row:hover td { background: rgba(0, 240, 255, 0.06); }
     padding: 12px 16px;
     margin: 12px 0;
     background: rgba(0, 0, 0, 0.15);
+}
+/* Inside the flex-column modal, let the list grow/shrink to fill
+   available space; the 50vh cap above still applies as a *minimum*
+   ceiling for shorter modals (when the modal-content is shorter than
+   90vh the list won't expand past 50vh anyway). `min-height: 0`
+   defeats the flex-item default that prevents shrinking below
+   content size. */
+#devicePickerModal .device-picker-list {
+    flex: 1 1 auto;
+    min-height: 0;
 }
 .device-picker-app {
     margin-bottom: 16px;
