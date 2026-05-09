@@ -850,7 +850,20 @@ async function fetchCatalogList() {
         return;
     }
 
-    const items = Array.isArray(data.items) ? data.items : [];
+    // Filter to bare `_catalog/<app>` keys — exclude `_catalog/<app>/_assets/*`
+    // (asset bytes), `_catalog/<app>/_assets/<file>.meta` (per-asset metadata),
+    // and `_catalog/<app>/_assets_index` (the asset index map). The `kv_scan`
+    // returns every key under the `_catalog/` prefix, so without this filter
+    // an app with N assets shows up as N+2 rows in the Catalogs view (one
+    // real catalog, N asset bytes, N meta sidecars, 1 index — though the
+    // grouping varies by which assets exist). The shape rule mirrors
+    // `routes_device.py:22-26`: catalogs are exactly two segments
+    // (`_catalog/<app>`); 3+ segments are asset payloads.
+    const rawItems = Array.isArray(data.items) ? data.items : [];
+    const items = rawItems.filter(it => {
+        const tail = it.key.startsWith(CATALOG_PREFIX) ? it.key.slice(CATALOG_PREFIX.length) : it.key;
+        return tail && !tail.includes('/');
+    });
     countEl.innerText = items.length;
 
     if (items.length === 0) {
