@@ -2,49 +2,35 @@
 
 ## Near-term
 
-- **Monitor tab "Clear" button repopulates seconds later.**
-  Observed 2026-05-08 during the P5 #1c admin-cleanup sweep.
-  Source: `backend/src/static/app.js` `monitorClear()` clears
-  both the DOM AND `monitorSeenIds`; the next polling fetch
-  pulls every message from the Redis stream (`xread` with no
-  cursor — bounded by the stream's `MAXLEN ~ 150000`) and since
-  `monitorSeenIds` is empty, every message looks new and gets
-  re-added. Pre-existing — not introduced by #1c (the function
-  body is unchanged; only the dispatch path moved from inline
-  `onclick=` to `data-action="monitorClear"`).
+- ~~**Add BuildKit cache mounts to `backend/Dockerfile`.**~~
+  Landed 2026-05-09 in v1.6.1. `--mount=type=cache,...` on the
+  three remote-fetching `RUN` lines (apt-get for system deps,
+  pip for backend requirements, pip for stra2us_cli). Dropped
+  the `rm -rf /var/lib/apt/lists/*` that the cache mount makes
+  unnecessary (cache mounts aren't committed to image layers,
+  so the image stays slim regardless). Verify on next rebuild:
+  the second build after this one should be noticeably faster
+  for the apt + pip layers; `docker buildx du` shows the cache
+  dirs populated.
 
-  Fix: track a `monitorClearedAfter = Date.now() / 1000` (or
-  the most recent stream ID at clear time) in `monitorClear()`;
-  have the polling fetch's render loop skip messages with
-  `received_at <= monitorClearedAfter`. ~5 lines. Not blocking;
-  Clear is rarely used and the workaround is "Stop, then Clear,
-  then Watch" which works as expected.
+- ~~**Monitor tab "Clear" button repopulates seconds later.**~~
+  Landed 2026-05-09 in v1.6.1. New `monitorClearedAfter`
+  module-level variable (`backend/src/static/app.js`) gets
+  stamped with `Math.floor(Date.now() / 1000)` in
+  `monitorClear()`; the polling fetch's render loop skips
+  messages with `received_at <= monitorClearedAfter`.
 
-- **Intermittent "Sign-in session expired or was forged."**
-  Observed 2026-05-08 during the catalog-app-ui FR walkthroughs.
-  Loading `/app/<app>/<device>` *sometimes* kicks to the OAuth
-  callback's CSRF-mismatch error page; hard refresh + re-auth
-  recovers cleanly. Source: `backend/src/api/routes_oauth.py:118`
-  (state-cookie verify). Reproduced sporadically across multiple
-  page-reload bursts. Pre-existing OAuth-flow code, surfaced by
-  the high reload volume during walkthroughs — not introduced by
-  the FR.
-
-  Most likely causes (ordered by suspicion):
-  1. Multiple tabs racing OAuth flows — a fresh flow's state
-     cookie overwrites the prior tab's; the prior tab's callback
-     sees a mismatch.
-  2. Stale tab + short-lived state cookie expiring while the
-     tab sits idle.
-  3. `samesite=lax` cross-redirect dropping the cookie on some
-     edge-Cloudflare path.
-
-  Action: instrument the callback to log which case we hit
-  (cookie missing vs. cookie present-but-mismatched), then
-  decide whether to extend the state cookie's lifetime, scope
-  one state cookie per tab via `name=oauth_state_<flow_id>`, or
-  surface a more-recoverable retry path. Not blocking; the
-  recovery (re-auth) takes seconds.
+- ~~**Intermittent "Sign-in session expired or was forged."**~~
+  Instrumented 2026-05-09 in v1.6.1. The CSRF-mismatch branch
+  in `routes_oauth.py:oauth_callback` now emits a
+  WARNING-level log under the `stra2us.oauth` channel
+  (`csrf_mismatch` event) with `case=cookie_missing` vs
+  `cookie_mismatch`, plus UA + Referer prefixes. Next time the
+  symptom is reported, the log distinguishes the three
+  suspected causes without further investigation. **Fix
+  itself is still pending** — instrumentation is the
+  prerequisite (need data to know which case to fix);
+  re-evaluate after a release of telemetry.
 
 - ~~**Bypass Cloudflare cache for `/admin/*` assets.**~~ Landed
   2026-05-06: CF Cache Rule on the austindavid.com zone with

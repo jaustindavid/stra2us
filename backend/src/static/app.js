@@ -1740,8 +1740,12 @@ function renderMonitorChips() {
                 monitorFilterClients.add(clientId);
             }
             renderMonitorChips();
-            // Filter is server-side; reset feed so newly-included history backfills.
-            monitorClear();
+            // Filter is server-side; reset feed so newly-included
+            // history backfills. Use the soft variant —
+            // `monitorClear` (the one wired to the Clear button)
+            // stamps a cutoff that would suppress the very
+            // backfill we want here.
+            _monitorResetFeed();
             if (monitorActive) monitorPoll();
         });
     });
@@ -1833,9 +1837,12 @@ function openMonitor(topic) {
     if (monitorLink) monitorLink.classList.add('active');
     document.getElementById('monitor').classList.add('active-view');
 
-    // Stop any existing session, pre-fill topic, start fresh
+    // Stop any existing session, pre-fill topic, start fresh.
+    // Soft reset — the operator's intent here is "show me this
+    // topic's stream tail now"; using the cutoff-stamping
+    // `monitorClear` would suppress the recent history.
     if (monitorActive) monitorStop();
-    monitorClear();
+    _monitorResetFeed();
     document.getElementById('monitorTopic').value = topic;
     monitorStart();
 }
@@ -1868,22 +1875,39 @@ function monitorStop() {
     status.className = 'monitor-status-off';
 }
 
-function monitorClear() {
-    // Stamp the cutoff BEFORE wiping `monitorSeenIds`. The
-    // polling fetch's render loop skips any message with
-    // `received_at <= monitorClearedAfter`, so even when the
-    // next poll arrives carrying the messages we just cleared
-    // (the polling fetch reads from the start of the Redis
-    // stream — no per-customer cursor today), the feed stays
-    // empty until genuinely new messages land.
-    //
-    // Floor instead of plain `Date.now() / 1000` so the cutoff
-    // is integer-comparable to the server's `received_at`
-    // (which is `unix_ms // 1000` — see the device queue
-    // handler in routes_device.py).
-    monitorClearedAfter = Math.floor(Date.now() / 1000);
+// Soft reset — empties the DOM + seenIds without stamping the
+// "ignore older messages" cutoff. Used by the internal
+// transitions where the operator's intent is "show me the
+// stream tail again, just refreshed":
+//   - `openMonitor(topic)` when clicking Monitor on a topic
+//     from the dashboard or queue list
+//   - the chip-toggle handler when adding/removing a client
+//     filter (the filter changed; let the server's filtered
+//     stream backfill into the feed)
+// Both of those would have populated with recent history
+// pre-v1.6.1; using the cutoff-stamping `monitorClear` here
+// instead would silently swallow that history and leave the
+// feed staring at "nothing" until brand-new messages land.
+function _monitorResetFeed() {
     document.getElementById('monitorFeed').innerHTML = '';
     monitorSeenIds.clear();
+}
+
+// Explicit Clear — what the operator triggers from the Clear
+// button. Stamps the cutoff so the next poll's render loop
+// skips messages with `received_at <= monitorClearedAfter`,
+// solving the "Clear, wait, watch it repopulate" bug from the
+// pre-v1.6.1 version. Only the `data-action="monitorClear"`
+// button hits this path; internal transitions use
+// `_monitorResetFeed` above.
+//
+// `Math.floor(Date.now() / 1000)` matches the server's
+// `received_at` shape (`unix_ms // 1000` — see
+// routes_device.py's queue handler), so the comparison in
+// monitorPoll is integer-equal.
+function monitorClear() {
+    monitorClearedAfter = Math.floor(Date.now() / 1000);
+    _monitorResetFeed();
 }
 
 // Stop monitor when navigating away
