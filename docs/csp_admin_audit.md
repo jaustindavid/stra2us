@@ -1,32 +1,78 @@
-# CSP enforcement — admin / api audit inventory
+# CSP enforcement — admin / api audit + cleanup record
 
-*Drafted 2026-05-08. Companion to
-[`fr_catalog_app_ui.md`](fr_catalog_app_ui.md) ("CSP rollout
-against an app that has no CSP today") and
-[`fr_catalog_app_ui_plan.md`](fr_catalog_app_ui_plan.md) P5.
-This is the **inventory** of CSP violations the admin/api surface
-contains as of P5 sign-off — *not* a record of fixes (none of the
-admin violations were addressed during P5; the customer-facing
-`/app/*` route flipped to enforcing without touching admin).*
+*Drafted 2026-05-08 as the inventory deliverable for P5 of
+[`fr_catalog_app_ui.md`](fr_catalog_app_ui.md). Updated 2026-05-08
+when the cleanup landed — kept the inventory in place as a
+historical record, added a "Cleanup landed" section at the top.*
 
-## Status
+## Status — cleanup ✅ landed (2026-05-08)
 
-The catalog-app-ui FR's P5 took the **two-track flip** described
-in the FR's "CSP rollout" section:
+Admin and api routes are now under **enforcing** Content Security
+Policy. Both halves of the FR's two-track plan (customer +
+admin) have flipped:
 
-* **`/app/*` enforcing** — customer-facing surface, built
-  CSP-clean from P0 onward; no violations.
-* **`/admin/*` and `/api/*` Report-Only** — pre-existing surface
-  that predates CSP. Cleaning it up is a real refactor; doing
-  it inside the catalog-app-ui FR would have ballooned scope
-  past the FR's actual goals. Deferred to a separate effort,
-  tracked here.
+| Route prefix | Header | Since |
+|---|---|---|
+| `/app/*` | `Content-Security-Policy:` (enforcing) | P5 (initial flip) |
+| `/admin/*`, `/api/*`, `/health`, `/` | `Content-Security-Policy:` (enforcing) | P5 #1d |
 
-Until the admin cleanup lands, the existing CSP middleware keeps
-emitting `Content-Security-Policy-Report-Only` on admin/api
-responses, with reports still flowing to `/api/_csp_report` and
-the `stra2us.csp` logger. Any new admin change that introduces
-a *new* violation surfaces in telemetry before it reaches enforcing.
+The cleanup work that made the admin flip safe ran in four
+sub-stages:
+
+* **#1a — Self-host CDNs.** js-yaml + Inter font moved from
+  `cdn.jsdelivr.net` / `fonts.googleapis.com` /
+  `fonts.gstatic.com` into `backend/src/static/_vendor/`. SHA-256
+  of the vendored js-yaml verified byte-equal to the prior
+  SRI-pinned version. License (SIL OFL 1.1) shipped with the
+  font. (~80 KB total in repo.)
+
+* **#1b — Inline `style=` in `index.html` → CSS classes.** ~17
+  occurrences. Eight new utility/named classes
+  (`.mt-sm`/`.mt-md`/`.mb-md`/`.flex-grow`/`.kv-value-row`/
+  `.checkbox-label`/`.checkbox-inline`/`.alert-error-strong`).
+
+* **#1c — Handlers + template-literal styles.** ~50 inline
+  `onclick=` handlers (across `index.html` + `app.js` template
+  literals) lifted to a single delegated `[data-action]`
+  dispatcher with an `ACTIONS` map. ~21 inline `style=`
+  attributes inside `app.js` template literals lifted to CSS
+  classes (badge variants, log-cell colors, monitor color
+  palette via `--c` custom property). One `onchange=` (device
+  picker checkbox) split out via `data-change-action` to avoid
+  click+change double-firing.
+
+  Two API surface changes worth knowing for future readers:
+  - `_logStatusColor()` → `_logStatusClass()` (returns class
+    name, not color string)
+  - `_formatValueCell(value, encrypted, inClickableRow)` →
+    `_formatValueCell(value, encrypted)` (the row-vs-button
+    distinction is unnecessary under delegation; `closest()`
+    naturally picks the inner button when clicked)
+
+* **#1d — Flip.** Single config change in `main.py`:
+  `CSPMiddleware(enforce_default=True)` (was
+  `enforce_path_prefixes=["/app/"]`). Verified live on staging:
+  every route response carries `Content-Security-Policy:`,
+  none carry `-Report-Only`. Admin UI's click flows verified
+  in the manual click-through.
+
+Test counts at sign-off: backend **256**, tools **169**.
+Regression tests guard the cleanup so future admin changes
+that re-introduce inline handlers / styles / CDN refs fail in
+CI before reaching browser console.
+
+The audit inventory below is preserved as the historical
+record of what was found + fixed. The FR-canon CSP shape
+unchanged: `default-src 'self'; script-src 'self'
+https://static.cloudflareinsights.com; ...; connect-src 'self'
+https://static.cloudflareinsights.com; ...` — same shape as
+post-P5-initial, just now applied universally.
+
+## Inventory (as of P5 audit, 2026-05-08)
+
+This section captures the surface as it stood when the audit
+ran — useful as a "what did we touch" reference and as a
+template for similar future audits.
 
 ## Inventory (as of 2026-05-08)
 

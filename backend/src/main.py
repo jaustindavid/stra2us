@@ -255,26 +255,39 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Content Security Policy. Customer-facing `/app/*` surface ships
-# in **enforcing** mode (per P5 of docs/fr_catalog_app_ui_plan.md
-# + the FR's "CSP rollout" two-track plan) — built CSP-clean from
-# P0 onward, no inline scripts/handlers/styles, no external CDN
-# refs after P3's js-yaml drop. Admin/api routes stay in
-# Report-Only because the existing admin UI predates CSP and uses
-# inline `onclick=` handlers + inline styles + two CDN resources
-# (js-yaml, Google Fonts) that would generate a flood of
-# violations on flip. The admin cleanup is a separate effort
-# tracked in the P5 audit doc; flipping it requires:
-#   - converting ~55 inline event handlers to addEventListener
-#   - lifting inline `style=` attributes to CSS classes
-#   - self-hosting (or explicitly allowlisting) the two CDNs
-#   - end-to-end retesting the admin UI
-# Until that lands, admin/api keep accumulating Report-Only
-# telemetry under the `stra2us.csp` logger so any new violation
-# introduced by future admin changes shows up before flip.
+# Content Security Policy — **enforcing across all routes** as of
+# P5 #1d. The history:
+#
+#   * P0 introduced the middleware in Report-Only with the FR's
+#     full strict policy.
+#   * P5 first flip: customer-facing `/app/*` to enforcing,
+#     admin/api stay Report-Only (different cleanup readiness).
+#   * P5 #1d (this state): admin/api also enforcing, after the
+#     #1a-c admin cleanup landed:
+#       - js-yaml + Inter font self-hosted (`backend/src/static/_vendor/`)
+#       - all inline `style=` lifted to CSS classes (~30 across
+#         index.html + app.js template literals)
+#       - all inline `onclick=` / `onchange=` lifted to a single
+#         delegated dispatcher reading `data-action` /
+#         `data-change-action` (~50 callsites)
+#
+# `enforce_default=True` flips every route. The CF Insights
+# allowance (script-src + connect-src + the
+# `static.cloudflareinsights.com` host) is handled inside
+# `build_policy` and applies uniformly. The
+# `report_only_path_prefixes` knob is empty — nothing is
+# deliberately staying behind. If a future admin tweak
+# re-introduces a violation, the user sees a console error
+# immediately rather than a slow telemetry trickle; the
+# `Reporting-Endpoints` header still wires the report-uri so
+# violations land in the `stra2us.csp` log either way.
+#
+# Rollback path: pass `enforce_default=False, enforce_path_prefixes=["/app/"]`
+# to revert to the prior partial-flip shape. CSP is config, not
+# data — flips are a deploy, not a migration.
 app.add_middleware(
     CSPMiddleware,
-    enforce_path_prefixes=["/app/"],
+    enforce_default=True,
 )
 app.include_router(csp_router, tags=["csp"])
 

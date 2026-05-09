@@ -2,6 +2,24 @@
 
 ## Near-term
 
+- **Monitor tab "Clear" button repopulates seconds later.**
+  Observed 2026-05-08 during the P5 #1c admin-cleanup sweep.
+  Source: `backend/src/static/app.js` `monitorClear()` clears
+  both the DOM AND `monitorSeenIds`; the next polling fetch
+  pulls every message from the Redis stream (`xread` with no
+  cursor — bounded by the stream's `MAXLEN ~ 150000`) and since
+  `monitorSeenIds` is empty, every message looks new and gets
+  re-added. Pre-existing — not introduced by #1c (the function
+  body is unchanged; only the dispatch path moved from inline
+  `onclick=` to `data-action="monitorClear"`).
+
+  Fix: track a `monitorClearedAfter = Date.now() / 1000` (or
+  the most recent stream ID at clear time) in `monitorClear()`;
+  have the polling fetch's render loop skip messages with
+  `received_at <= monitorClearedAfter`. ~5 lines. Not blocking;
+  Clear is rarely used and the workaround is "Stop, then Clear,
+  then Watch" which works as expected.
+
 - **Intermittent "Sign-in session expired or was forged."**
   Observed 2026-05-08 during the catalog-app-ui FR walkthroughs.
   Loading `/app/<app>/<device>` *sometimes* kicks to the OAuth
