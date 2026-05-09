@@ -749,3 +749,195 @@ reverting too. Standard "revert the merge commit" flow applies.
   it on first try. Proves the walkthrough's value beyond CI:
   forward-compat / cross-version contracts only break under
   live combinations.
+
+---
+
+## P4 — JS form behavior *(signed off 2026-05-08)*
+
+**Status:** ✅ shipped. 168 tools + 232 backend tests green
+(+20 from P3), all eight plan walkthrough steps verified live on
+staging — including the two marquee FR promises that this entire
+feature was about: **off-spec values preserved across no-touch
+saves**, and **`write_only` fields not stomped to empty by an
+absent-minded Save**.
+
+### Architecture decision
+
+P4 wires P0's standalone `forms/touched_state.js` module into
+the customer device form via fetch-based submit. The module was
+written in P0 and structurally tested; P3 produced server-side
+markup that already carries the `data-original` /
+`data-write-only` / `data-valid` attributes the JS reads.
+P4's job was the wiring layer — `app.js` converts to an ES
+module, imports `init` + `attachSubmitHandler`, intercepts
+form submit, POSTs the touched-state-aware payload via fetch,
+reloads on success.
+
+The server-side form-submit handler **stayed unchanged** —
+P3's strict-naive iteration was already "write whatever fields
+are present," which becomes "write only touched + clean
+non-write-only" when the JS controls what's in the payload. The
+cross-tier correctness is the JS's job (omitting clean
+write_only fields from the body) + the server iterating
+naïvely (P3 handler, untouched).
+
+### Deliverables landed
+
+| Plan item | Path | Notes |
+|---|---|---|
+| Wire touched_state into device form | [`backend/src/static/app/app.js`](../backend/src/static/app/app.js) | Converted to ES module; `import { init, serialize, attachSubmitHandler } from './forms/touched_state.js'`; `initDevice` wires both into the `<form class="catalog-form">`; `onFormSubmit` intercepts → URLSearchParams body → fetch POST → `window.location.reload()` on success. |
+| Module-loading update | [`backend/src/static/app/device.html`](../backend/src/static/app/device.html), [`landing.html`](../backend/src/static/app/landing.html) | `<script type="module">` (was `defer`); landing.html got fixed for an unrelated P3 trim regression (`#deviceNameInput` → `#deviceName`). |
+| `Cache-Control: no-store` on device page | [`backend/src/api/routes_app.py`](../backend/src/api/routes_app.py) | `_render_device_page` returns the `HTMLResponse` with `Cache-Control: no-store`. Caught during walkthrough — without it, `window.location.reload()` after Save could serve a cached pre-save page, masking whether touched-state behaved correctly. |
+| `data-valid` styling softening | [`backend/src/static/app/styles.css`](../backend/src/static/app/styles.css) | Red on invalid stays loud (full outline); green on valid demoted to `border-color` only — keeps the form quiet when every pattern field is valid by default. |
+| New tests | [`backend/tests/test_app_js_p4_wiring.py`](../backend/tests/test_app_js_p4_wiring.py) (14), partial-payload extension to [`test_app_form.py`](../backend/tests/test_app_form.py) (5), cache-header regression in [`test_device_page_integration.py`](../backend/tests/test_device_page_integration.py) (1) | Total +20 backend. |
+
+### Test counts
+
+* Backend: **232 passing** (was 212). +20 P4:
+  * 14 `test_app_js_p4_wiring` — module-load shape, `init`/`attachSubmitHandler` imports + calls, fetch-POST + reload + preventDefault, non-regression on telemetry + reveal + jsdelivr-removal.
+  * 5 `test_app_form` partial-payload cases — write_only-clean omitted preserves KV, write_only-touched writes through, off-spec preserved via data-original resend, dirty clobbers, mixed-form partial writes.
+  * 1 `test_device_page_integration` — `Cache-Control: no-store` on device page response.
+* Tools: **168 passing**, unchanged (P4 doesn't touch CLI).
+
+### Deviations from plan
+
+1. **Server-side form-submit handler unchanged.** Plan said
+   "Server-side form-submit handler updated to do partial
+   updates (only write fields present in submission)." P3's
+   strict-naive handler already iterated only present fields;
+   P4 didn't need to touch it. The "partial-update" semantics
+   shifted entirely to the JS-controlled payload. The five
+   new tests in `test_app_form.py` document the cross-tier
+   contract so a future server change that breaks this fails
+   loudly.
+
+2. **`Cache-Control: no-store` not in plan.** Caught during the
+   walkthrough — without it, a `window.location.reload()` after
+   form save could be served from browser cache, hiding whether
+   touched-state worked. Three reproductions in a row before
+   the diagnosis clicked: refresh stayed at 50 even though KV
+   held 129; shift-reload (cache bypass) showed the badge;
+   normal reload didn't. Fix is the page response opting out of
+   browser caching for the dynamic device-page route — the CSS
+   / theme / asset routes stay cache-immutable individually.
+
+3. **app.js trim regression repaired.** P3's trim renamed the
+   landing form's input to `#deviceNameInput` in JS but the
+   HTML kept `id="deviceName"`. Live landing form was broken
+   between P3 and P4 deploys; nobody noticed because nobody
+   used it. P4 caught it during the module-loading conversion.
+   Documenting so a future "what regressed when?" archaeology
+   has a quick answer.
+
+4. **Initial `data-valid` set on first render.** P0's
+   `touched_state.js` sets `data-valid="true|false"` at
+   `init()` time, not just on first input. The FR text says
+   "as the user types"; the P0 module's choice was "set
+   initial state for visible feedback before any keystroke."
+   P4 lives with that and softens the CSS for valid (border
+   color, not full outline) so the initial state isn't loud.
+   If "neutral until first keystroke" is the right UX, removing
+   the initial-set is one small edit in the P0 module — flagged
+   as a low-priority followup.
+
+### Open question resolutions
+
+| Open Q | Decision | Where |
+|---|---|---|
+| Where does the partial-update logic live? | JS-side via `serialize()` omitting clean+write_only; server stays naïve | [`app.js`](../backend/src/static/app/app.js) + P3's [`routes_app_form.py`](../backend/src/api/routes_app_form.py) untouched |
+| ES modules vs `defer`? | `<script type="module">` for both pages — required for `import`; runs in strict mode by default | [`device.html`](../backend/src/static/app/device.html), [`landing.html`](../backend/src/static/app/landing.html) |
+| Should valid pattern fields paint green at first paint? | Yes, but with subtler CSS than the loud red of invalid | [`styles.css`](../backend/src/static/app/styles.css) data-valid rules |
+| Browser cache vs `location.reload()`? | `Cache-Control: no-store` on device page; CSS/theme/assets stay individually cache-immutable | [`routes_app.py`](../backend/src/api/routes_app.py) |
+
+### Sign-off checklist
+
+| Item | Status | Notes |
+|---|:---:|---|
+| All automated tests green | ✅ | 168 tools + 232 backend |
+| Snap-on-edit untouched: stored 129 stays 129 | ✅ | live: refreshed page showed badge with `129`; Save without touching the slider; KV verified `129` post-save |
+| Snap-on-edit dirty: drag → 50 writes 50 | ✅ | live: dragged slider, Save, KV showed 50 |
+| `write_only` untouched: stored secret survives empty-form Save | ✅ | live: KV held `'actualsecret'`, refreshed page (empty wifi), Save, KV verified `'actualsecret'` post-save |
+| `write_only` touched: typed value writes | ✅ | live: typed in field, Save, KV showed the new value |
+| Live pattern: red on invalid keystrokes | ✅ | live: typed `7am` into `start_time`, red outline appeared per-keystroke |
+| Live pattern: green when valid | ✅ | live: typed `07:30`, subtle green border appeared |
+| No silent data stomping in any path tested | ✅ | both off-spec and write_only paths preserve as designed |
+| CSP clean | ✅ | `<script type="module">` is same-origin; no inline handlers, no `eval`, `cdn.jsdelivr.net` removed in P3 |
+
+### Manual walkthrough
+
+All 8 plan walkthrough steps verified live on staging on
+2026-05-08 against `https://stra2us-staging.austindavid.com/app/critterchron/p3demo`.
+
+| Step | Status | Notes |
+|---|:---:|---|
+| 1. Set `ir_brightness=129` via CLI | ✅ | reset done CLI-side; page rendered with badge `129 — not in current allowed values` and slider visually pinned at 100. |
+| 2. Open page; slider pinned at 100, warning shows 129 | ✅ | confirmed in browser; `data-original="129"` on the slider input. |
+| 3. Submit form without touching anything; refresh shows `129` still | ✅ | **the marquee P4 test.** Save → page reloaded → badge still showed 129. CLI verified KV unchanged. |
+| 4. Move slider to 50, Save → KV now 50 | ✅ | Save → page reloaded → badge gone, slider at 50. |
+| 5. Set `wifi_password=actualsecret`; open page, input is empty | ✅ | re-set CLI-side; page rendered empty masked input, no Reveal button (write_only takes precedence). |
+| 6. Submit without touching wifi → KV still holds `actualsecret` | ✅ | **the second marquee P4 test.** Save → page reloaded → CLI-verified KV still `actualsecret`. |
+| 7. Type new password, submit → KV updates | ✅ | typed value, Save → CLI-verified KV updated to new value. |
+| 8. Type `7am` then `07:30` into `start_time` → red then green | ✅ | per-keystroke red on `7am`; green border on `07:30`. |
+
+### Items deferred / followups
+
+Two new + the prior list:
+
+1. **Browser-side test runtime.** The combination of P0's
+   structural-only JS tests + P4's manual walkthrough has
+   worked through 4 phases, but the failure mode (cache header
+   issue caught only in walkthrough; required three browser
+   reproductions to diagnose) suggests adding a real browser
+   runtime would pay off. Playwright + a small fixture corpus
+   could exercise the touched-state behaviors end-to-end on
+   every CI run. Tracked as a v2 item; not blocking.
+
+2. **Initial `data-valid` set vs neutral-until-first-input.**
+   P0 module sets data-valid at bind time. FR-pedant interpretation
+   is "neutral until first keystroke." Soft CSS in P4 makes the
+   initial-set unobtrusive; if a future UX review says "I want
+   neutral-then-feedback," removing the initial-set is a 3-line
+   change in `forms/touched_state.js`.
+
+3. **Build-context consolidation** (carried from P3). Switch
+   docker-compose context to repo root + `pip install -e tools/`
+   so backend can drop the vendored `markdown_render.py` + the
+   parity test, and `widget_renderer` can take pydantic `Var`
+   instead of dict.
+
+4. **Server-side lint at catalog upload** (carried from P0/P1/P2/P3).
+
+5. **YAML 1.1 truthy-enum doc note** (still open from P0).
+
+### Rollback
+
+Reverting P4 leaves staging on P3: form submits via browser
+native POST, which fires the strict-naive handler with every
+form field — re-introducing the off-spec stomp + write_only-wipe
+footguns. The data layer survives the rollback (no schema
+changes); the failure mode is "the customer page silently
+stomps" rather than "the customer page crashes."
+
+### Deploy notes
+
+* Initial deploy was clean (smoke 10/10). The `Cache-Control:
+  no-store` fix required a second redeploy — caught during
+  walkthrough as described in deviations.
+* Walkthrough re-uses the P3 fixture (`p3demo` device under
+  critterchron) but **the prior walkthrough's saves wrote
+  values that needed re-setting** — `ir_brightness` had been
+  stomped to 50 from P3's step 3, and `wifi_password` had been
+  cleared. CLI-side `set ... 129` + `set ... actualsecret
+  --encrypted` reset the fixture to a known off-spec /
+  encrypted state for each walkthrough phase. Pattern: when
+  reusing fixtures across phases, expect to reset them.
+* Two diagnostic gotchas worth knowing for future phases:
+  - **Browser cache + JS reload.** `window.location.reload()`
+    serves stale content if the dynamic page lacks
+    `Cache-Control: no-store`. Confounded the walkthrough until
+    the third pass.
+  - **Off-spec preservation cannot be observed after a clobber.**
+    Step 4 (drag + save → KV=50) wiped the evidence of step 3's
+    behavior. The marquee test for P4 must be retried each time
+    the fixture is reset; the test passes by ABSENCE of stomping
+    rather than by presence of any positive signal.
