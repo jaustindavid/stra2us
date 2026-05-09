@@ -283,6 +283,12 @@ async function toggleReveal(varName, btn) {
     if (btn.innerText === 'Hide') {
         input.value = '';
         input.placeholder = '••••••••';
+        // Re-mask: flip back to type=password so the placeholder dots
+        // render the way the page first loaded. Pre-fix this branch
+        // ran but the input was already type=password, so re-clicking
+        // Hide was a no-op visually — fine; it's the symmetric flip
+        // that makes the Reveal branch work.
+        input.type = 'password';
         btn.innerText = 'Reveal';
         return;
     }
@@ -301,6 +307,12 @@ async function toggleReveal(varName, btn) {
                 ? data.message
                 : String(data.message);
             input.placeholder = '';
+            // Unmask: flip type=password → type=text so the populated
+            // plaintext is actually visible. Pre-fix the value landed
+            // in the input but the browser kept rendering it as
+            // dots because the type stayed `password` — the bug
+            // this branch is fixing.
+            input.type = 'text';
             btn.innerText = 'Hide';
         } else {
             btn.innerText = 'Reveal';
