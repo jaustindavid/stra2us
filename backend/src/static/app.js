@@ -1703,6 +1703,13 @@ const monitorClientColors = {};
 let monitorInterval = null;
 let monitorSeenIds = new Set();
 let monitorActive = false;
+// Epoch (seconds; matches the server's `received_at` shape) of
+// the most recent `monitorClear()`. Used by `monitorPoll`'s
+// render loop to skip stream messages older than this — without
+// it, Clear briefly empties the feed and the next poll re-adds
+// every visible message. Initialized to 0 so a never-cleared
+// session shows the full stream tail. Updated by `monitorClear`.
+let monitorClearedAfter = 0;
 let monitorFilterClients = new Set();
 let monitorKnownClients = [];
 let monitorClientsLoaded = false;
@@ -1781,6 +1788,15 @@ async function monitorPoll() {
     // oldest-first, ending with the newest entry at the top of the feed.
     for (const msg of [...messages].reverse()) {
         if (monitorSeenIds.has(msg.id)) continue;
+        // Skip messages older than the most recent Clear. Without this,
+        // hitting Clear mid-watch repopulated the feed on the next
+        // poll: clearing `monitorSeenIds` in `monitorClear()` makes
+        // every stream message look new again, and the polling fetch
+        // reads from the start of the stream (no cursor). The
+        // `monitorClearedAfter` epoch lets us "skip the past" without
+        // touching the polling protocol. See TODO.md ("Monitor tab
+        // 'Clear' button repopulates seconds later").
+        if (msg.received_at <= monitorClearedAfter) continue;
         monitorSeenIds.add(msg.id);
         addedAny = true;
 
@@ -1853,6 +1869,19 @@ function monitorStop() {
 }
 
 function monitorClear() {
+    // Stamp the cutoff BEFORE wiping `monitorSeenIds`. The
+    // polling fetch's render loop skips any message with
+    // `received_at <= monitorClearedAfter`, so even when the
+    // next poll arrives carrying the messages we just cleared
+    // (the polling fetch reads from the start of the Redis
+    // stream — no per-customer cursor today), the feed stays
+    // empty until genuinely new messages land.
+    //
+    // Floor instead of plain `Date.now() / 1000` so the cutoff
+    // is integer-comparable to the server's `received_at`
+    // (which is `unix_ms // 1000` — see the device queue
+    // handler in routes_device.py).
+    monitorClearedAfter = Math.floor(Date.now() / 1000);
     document.getElementById('monitorFeed').innerHTML = '';
     monitorSeenIds.clear();
 }
