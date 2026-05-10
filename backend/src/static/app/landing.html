@@ -4,6 +4,13 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Find your device</title>
+    <!-- Default favicon for the landing page. Derived from the
+         admin favicon at backend/src/static/favicon.png, downsized
+         to 256x256 (~74 KB vs the source's 2048x2048 / 4.6 MB).
+         Per-app override only kicks in once the customer is on
+         /app/<app>/<device>; the landing form has no app context
+         yet so the default is the right answer here. -->
+    <link rel="icon" type="image/png" href="/app/_static/favicon.png">
     <link rel="stylesheet" href="/app/_static/styles.css?v=3">
 </head>
 <body class="app-page app-landing-page">
@@ -36,6 +43,6 @@
         </p>
     </main>
 
-    <script type="module" src="/app/_static/app.js?v=10"></script>
+    <script type="module" src="/app/_static/app.js?v=11"></script>
 </body>
 </html>

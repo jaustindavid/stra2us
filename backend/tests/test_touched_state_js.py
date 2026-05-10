@@ -103,6 +103,34 @@ def test_write_only_field_omitted_when_clean():
     assert re.search(r"continue\s*;", src)  # explicit omit branch
 
 
+def test_from_default_field_omitted_when_clean():
+    """v1.6.7 (TODO #6): a clean field whose current value came from
+    the catalog default (`data-from-default="true"`) must be omitted
+    from the submit payload — same shape as the write_only-omit
+    branch. Pre-v1.6.7 the serializer sent the catalog default as
+    the field's data-original value, materializing per-device
+    overrides on every "save" click even for fields the operator
+    never touched.
+    """
+    src = _read(_JS_PATH)
+    # The `data-from-default` attribute is dataset.fromDefault on
+    # the element side; either spelling proves the wire-up.
+    assert "fromDefault" in src or "from-default" in src or "fromdefault" in src
+    # And the omission shape — there should be at least two
+    # explicit `continue` statements in serialize() (one for
+    # write_only, one for from_default).
+    serialize_block = re.search(
+        r"function serialize\([^)]*\)\s*\{(.*?)\n\}",
+        src, re.DOTALL,
+    )
+    assert serialize_block is not None
+    continues = re.findall(r"continue\s*;", serialize_block.group(1))
+    assert len(continues) >= 2, (
+        f"Expected ≥2 `continue;` statements in serialize() for the "
+        f"write_only and from_default omit branches; found {len(continues)}"
+    )
+
+
 def test_dirty_branches_distinguish_live_vs_original():
     """Submit serialization splits per the FR: dirty → live value;
     clean → data-original verbatim. Both code paths must exist."""

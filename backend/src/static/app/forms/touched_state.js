@@ -140,8 +140,21 @@ function serialize(form) {
     seen.add(name);
     const dirty = el.dataset.dirty === "true";
     const writeOnly = el.dataset.writeOnly === "true";
+    const fromDefault = el.dataset.fromDefault === "true";
     if (writeOnly && !dirty) {
       // Omit entirely — server treats absence as "preserve current."
+      continue;
+    }
+    if (fromDefault && !dirty) {
+      // v1.6.7 (TODO #6): the field's current value came from the
+      // catalog's `default:`, not from any stored KV record. The
+      // operator hasn't touched it. Omit it from the submit so we
+      // don't materialize a per-device override they didn't ask
+      // for — the resolution chain (per-device → app-scope →
+      // catalog default) keeps producing the same value on the
+      // next page load. Pre-v1.6.7 this materialized the default
+      // into per-device KV, surprising the operator who only
+      // edited one other field.
       continue;
     }
     out[name] = dirty

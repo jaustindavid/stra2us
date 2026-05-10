@@ -257,3 +257,48 @@ def test_unlabelled_vars_omitted(fake_redis):
     assert 'data-var="shown"' in body
     assert 'data-var="hidden"' not in body
     assert 'name="hidden"' not in body
+
+
+# ----- v1.6.7: favicon plumbing (TODO #7) ---------------------------
+# The customer device page emits a `<link rel="icon">` whose href
+# resolves from the catalog's `theme.favicon_asset` if set, else
+# falls back to the default at `/app/_static/favicon.png`. Pre-v1.6.7
+# the page emitted no favicon link, so browsers speculatively
+# requested `/favicon.ico` and got 404s — cosmetic noise in the
+# console.
+
+def test_favicon_defaults_to_static_when_catalog_has_no_theme(fake_redis):
+    """No catalog at all → no theme → default favicon."""
+    response = _run(routes_app._render_device_page("uncataloged", "dev1"))
+    body = response.body.decode("utf-8")
+    assert '<link rel="icon" href="/app/_static/favicon.png">' in body
+
+
+def test_favicon_defaults_to_static_when_theme_omits_favicon(fake_redis):
+    """Catalog has a theme but no `favicon_asset` → default favicon."""
+    fake_redis.stash_catalog("demo", {
+        "app": "demo",
+        "theme": {"primary_color": "#5b3fb8"},
+        "vars": {},
+    })
+    response = _run(routes_app._render_device_page("demo", "dev1"))
+    body = response.body.decode("utf-8")
+    assert '<link rel="icon" href="/app/_static/favicon.png">' in body
+
+
+def test_favicon_uses_per_app_asset_when_set(fake_redis):
+    """Catalog declares `theme.favicon_asset` → renders as
+    `/app/<app>/_assets/<file>`. Mirrors how `logo_asset` resolves."""
+    fake_redis.stash_catalog("demo", {
+        "app": "demo",
+        "theme": {"favicon_asset": "brand.svg"},
+        "vars": {},
+    })
+    response = _run(routes_app._render_device_page("demo", "dev1"))
+    body = response.body.decode("utf-8")
+    assert '<link rel="icon" href="/app/demo/_assets/brand.svg">' in body
+    # The default URL should NOT appear in a `<link rel="icon">` tag
+    # — the per-app override replaces it. (The static filename may
+    # appear in unrelated places like comments; we narrow the check
+    # to the actual link tag the browser consumes.)
+    assert '<link rel="icon" href="/app/_static/favicon.png">' not in body

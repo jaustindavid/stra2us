@@ -406,3 +406,7 @@ git push origin --delete <branch>
 The whole cycle is ~10 commands once it's muscle memory. Most of
 the time spent in a release should be the verify steps (5 and 8),
 not the git plumbing.
+
+## After .gitignore...
+
+`git ls-files -i -c --exclude-standard`

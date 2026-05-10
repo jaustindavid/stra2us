@@ -12,6 +12,13 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Device</title>
+    <!-- Favicon: per-app via `theme.favicon_asset` if set, otherwise
+         the default at /app/_static/favicon.png. Substituted at
+         request time by `_render_device_page` in routes_app.py.
+         No `type=` attribute since the per-app asset may be any
+         format the catalog declares (svg/png/ico); browsers
+         sniff content type from the URL extension. -->
+    <link rel="icon" href="{{FAVICON_HREF}}">
     <link rel="stylesheet" href="/app/_static/styles.css?v=3">
     <link rel="stylesheet" href="/app/{{APP}}/_theme.css?v={{THEME_HASH}}">
 </head>
@@ -54,6 +61,6 @@
          `forms/touched_state.js` without leaking the import chain
          to global scope. Modules are deferred by default — no
          `defer` attribute needed. -->
-    <script type="module" src="/app/_static/app.js?v=10"></script>
+    <script type="module" src="/app/_static/app.js?v=11"></script>
 </body>
 </html>

@@ -315,6 +315,80 @@ def test_no_customer_facing_vars_renders_empty_form():
     assert '<button type="submit"' in html
 
 
+# ----- v1.6.7: data-from-default plumbing (TODO #6) ----------------
+# Renderer tags inputs whose current value came from the catalog
+# default (vs. a stored KV record) with `data-from-default="true"`.
+# The touched-state serializer reads this to skip clean fields,
+# so saving one edit doesn't materialize per-device overrides for
+# every other field's catalog default. The encrypted-with-Reveal
+# branch doesn't need the tag (encrypted values aren't from the
+# catalog default; they're a stored encrypted record).
+
+def test_data_from_default_emitted_when_value_is_catalog_default():
+    """Field whose current value resolved to the catalog default
+    gets `data-from-default="true"` on its `<input>`."""
+    html = render_page(app="critterchron", device="dev1",
+                      catalog=_CRITTERCHRON,
+                      values={"display_mode": ResolvedValue("clock", from_default=True)})
+    # display_mode is an enum-rendered <select>, but the
+    # data-from-default attribute should still ride along.
+    assert 'data-from-default="true"' in html
+    # And it should be on the display_mode field specifically.
+    assert 'id="field-display_mode" data-from-default="true"' in html
+
+
+def test_data_from_default_omitted_for_stored_value():
+    """Field whose current value came from a stored KV record
+    (not the catalog default) does NOT get the tag — the
+    operator's previous edit is the authoritative state, and a
+    no-op submit should preserve it."""
+    html = render_page(app="critterchron", device="dev1",
+                      catalog=_CRITTERCHRON,
+                      values={"display_mode": ResolvedValue("weather", from_default=False)})
+    # Look at the display_mode select specifically — other fields
+    # may legitimately have data-from-default if they fell to
+    # default; we only care that THIS one doesn't.
+    # Cheap heuristic: find the substring near display_mode's id.
+    needle = 'id="field-display_mode"'
+    idx = html.find(needle)
+    assert idx >= 0
+    nearby = html[idx:idx + 100]
+    assert "data-from-default" not in nearby
+
+
+def test_data_from_default_not_on_encrypted_reveal_path():
+    """The encrypted-non-write_only Reveal branch renders an empty
+    input bound to an external fetch — no concept of "default"
+    applies. The renderer should NOT emit `data-from-default` on
+    that code path. Uses a one-field custom catalog because the
+    main fixture's `wifi_password` is `write_only: true`, which
+    routes through a different (widget-renderer) branch."""
+    custom_catalog = {
+        "app": "demo",
+        "vars": {
+            # Encrypted, not write_only — hits the Reveal-button path.
+            "api_token": {
+                "type": "string", "scope": ["app", "device"],
+                "label": "API token",
+                "widget": "secret", "encrypted": True,
+            },
+        },
+    }
+    html = render_page(app="demo", device="dev1",
+                      catalog=custom_catalog,
+                      values={"api_token": ResolvedValue("plaintext-token",
+                                                        encrypted=True)})
+    needle = 'id="field-api_token"'
+    idx = html.find(needle)
+    assert idx >= 0
+    nearby = html[idx:idx + 200]
+    assert 'data-encrypted="true"' in nearby, (
+        "encrypted-non-write_only field should hit the Reveal branch "
+        "(data-encrypted=true on the input)"
+    )
+    assert "data-from-default" not in nearby
+
+
 # ----- publish hash stability -----
 
 def test_publish_hash_stable_across_renders():

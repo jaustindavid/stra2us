@@ -298,6 +298,40 @@ def test_theme_logo_asset_present_in_bundle_ok():
     assert errors(lint_catalog(cat, asset_listing={"logo.svg"})) == []
 
 
+# ----- v1.6.7: theme.favicon_asset (TODO #7) ---------------------
+# Same shape of validation as `logo_asset`: filename pattern +
+# asset-must-exist + counted as "referenced" by the unused-asset
+# warning so the catalog can ship a per-app favicon without
+# tripping the "asset present but not referenced" warning.
+
+def test_theme_favicon_asset_filename_shape():
+    cat = _cat(theme=Theme(favicon_asset="../etc/passwd"))
+    assert "theme.favicon_asset" in _err_paths(lint_catalog(cat))
+
+
+def test_theme_favicon_asset_must_exist_when_listing_provided():
+    cat = _cat(theme=Theme(favicon_asset="favicon.svg"))
+    issues = errors(lint_catalog(cat, asset_listing=set()))
+    assert any("not in bundle" in i.message for i in issues)
+
+
+def test_theme_favicon_asset_present_in_bundle_ok():
+    cat = _cat(theme=Theme(favicon_asset="favicon.svg"))
+    assert errors(lint_catalog(cat, asset_listing={"favicon.svg"})) == []
+
+
+def test_theme_favicon_asset_counted_as_referenced():
+    """A favicon asset shouldn't trip the 'unused asset' warning —
+    it's referenced just like the logo, even though the
+    reference is in the HTML head (not the catalog YAML body)."""
+    cat = _cat(theme=Theme(favicon_asset="favicon.svg"))
+    warnings_for_favicon = [
+        i for i in warnings(lint_catalog(cat, asset_listing={"favicon.svg"}))
+        if "favicon.svg" in i.path or "favicon.svg" in i.message
+    ]
+    assert warnings_for_favicon == []
+
+
 def test_theme_logo_alt_length_capped():
     cat = _cat(theme=Theme(logo_alt="a" * 200))
     assert "theme.logo_alt" in _err_paths(lint_catalog(cat))

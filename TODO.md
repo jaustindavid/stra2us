@@ -52,6 +52,62 @@
   ~30 lines + test updates. Touches lint + renderer + a couple
   existing tests that assert specific shapes.
 
+- **Document the `write_only: true` + multi-writer-race discipline.**
+  Surfaced during v1.6.7 staging verification: with a customer
+  page open on a stale render where `wifi_password` was empty,
+  the operator ran `stra2us set <device> wifi_password <value>`
+  from the CLI. The browser still showed the (now-stale) empty
+  field. Editing any *other* field on the browser and saving
+  serialized the stale `wifi_password=""` along with the change,
+  overwriting the freshly-set encrypted value. This is exactly
+  what `write_only: true` (per the v1.6.4 lint) is meant to
+  prevent — the omit-on-untouched branch in the touched-state
+  serializer would have skipped the empty field entirely.
+
+  The v1.6.4 lint already catches the missing-`write_only` case,
+  but the warning text only frames it as "stored value clobbered
+  by empty submit" without naming the multi-writer scenario
+  that makes it acute. Catalog authors reading the lint may not
+  realize how easily the race surfaces in practice (operator
+  flipping between CLI and browser, or — once devices write to
+  the same fields — device + operator concurrently).
+
+  Two doc-level fixes:
+
+  1. **Expand the v1.6.4 lint warning** in
+     `tools/stra2us_cli/catalog_lint.py:_lint_field_secret_pairing`
+     to name the multi-writer case explicitly. Current text:
+     *"masked field renders empty by default and an untouched
+     submit will write the empty value over the stored one."*
+     Add: *"...or one made on a stale render after the value
+     was set elsewhere (e.g. via `stra2us set` or a device
+     write)."* Two-line tweak; highest leverage because every
+     future catalog hits the lint at publish.
+
+  2. **Document the triplet pattern in `docs/catalog_spec.md`**
+     (or wherever the canonical catalog grammar reference
+     lives). A short section explaining that
+     `widget: secret` + `write_only: true` + `encrypted: true`
+     are three composable primitives that almost always belong
+     together for any device-readable secret, with a one-
+     paragraph rationale for each. Mirror the explanation that
+     lives in the v1.6.4 secret-pairing lint's docstring, but
+     in the spec rather than the lint code.
+
+  Plus a smaller third nicety: expand the comment block on
+  `wifi_password` in `tools/examples/critterchron_v2.s2s.yaml`
+  to name the multi-writer race, since that file is what
+  catalog authors copy-paste from when starting a new field.
+
+  Explicitly out of scope: **concurrent-write detection /
+  ETag-style versioning.** Surfaced during v1.6.7 verification
+  as a possible mitigation; rejected as too heavyweight for
+  the surface size. The race is real but rare in practice
+  (it only matters when two writers are actually concurrent),
+  and the `write_only` discipline closes the common cases.
+  Documenting "yes, that race exists; here's how to avoid it"
+  is the right level of response for this codebase's scale.
+
 - **Surface the running release version in the admin UI.**
   Today's "what's actually deployed?" answer requires SSHing
   to the host and running `tools/stage status` (or
