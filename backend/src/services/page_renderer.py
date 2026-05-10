@@ -156,10 +156,20 @@ def _render_off_spec_badge(current_value: str | None) -> str:
 
 
 def _render_setting_card(name: str, var: dict, current: str | None,
-                         encrypted: bool, app: str,
+                         encrypted: bool, from_default: bool, app: str,
                          publish_hash: str) -> str:
     """One `<div class="setting-card">` containing label, help,
-    optional off-spec badge, and the widget."""
+    optional off-spec badge, and the widget.
+
+    `from_default=True` signals that `current` came from the catalog's
+    `default:` field rather than from a stored KV value — i.e. the
+    resolution chain bottomed out at step 3. The renderer surfaces
+    this as `data-from-default="true"` on the input element, which
+    the touched-state serializer reads to skip clean fields that
+    are still showing the catalog default. Without this signal the
+    form-submit would materialize per-device overrides for every
+    untouched field whose value came from the catalog, surprising
+    the operator who only edited one field. (TODO #6, v1.6.7.)"""
     label = var.get("label") or name
     parts = [f'<div class="setting-card" data-var="{_esc(name)}">']
     parts.append(
@@ -198,6 +208,17 @@ def _render_setting_card(name: str, var: dict, current: str | None,
             f'name="{_esc(name)}" id="field-{_esc(name)}"',
             1,
         )
+        # v1.6.7 (TODO #6): tag fields whose current value came from
+        # the catalog default. The touched-state serializer skips
+        # clean+from-default fields so saving one edit doesn't
+        # silently materialize per-device overrides for every other
+        # field's catalog default.
+        if from_default:
+            widget_with_id = widget_with_id.replace(
+                f'id="field-{_esc(name)}"',
+                f'id="field-{_esc(name)}" data-from-default="true"',
+                1,
+            )
         parts.append(widget_with_id)
         # v1.6.5: also emit a Reveal/Hide toggle next to any
         # `widget: secret` field, even when there's no encrypted
@@ -251,8 +272,9 @@ def render_page(*, app: str, device: str, catalog: dict,
         rv = values.get(name)
         current = rv.value if rv is not None else None
         encrypted = bool(rv and rv.encrypted)
+        from_default = bool(rv and rv.from_default)
         parts.append(_render_setting_card(name, var, current, encrypted,
-                                          app, publish_hash))
+                                          from_default, app, publish_hash))
     parts.append(
         '<div class="catalog-form-actions">'
         '<button type="submit" class="btn-primary">Save</button>'
