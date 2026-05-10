@@ -2,6 +2,76 @@
 
 ## Near-term
 
+- **Surface the running release version in the admin UI.**
+  Today's "what's actually deployed?" answer requires SSHing
+  to the host and running `tools/stage status` (or
+  `git rev-parse --short HEAD` in `$PROD_DIR`). For routine
+  "did my deploy go?" / "is staging on v1.6.6 yet?" questions,
+  a visible version badge in the admin sidebar (or a small
+  status panel) closes the loop without leaving the browser.
+  This TODO was filed mid-debug after a missed deploy step
+  left staging on v1.6.5 while v1.6.6 instrumentation was
+  expected — a "Running: v1.6.5 (4b28654)" badge would have
+  caught it instantly.
+
+  Three implementation shapes to weigh:
+  1. **Build-time env var.** `tools/stage promote` and
+     `tools/stage deploy` pass `--build-arg RELEASE_TAG=<tag>`
+     (or `<commit>`); Dockerfile bakes it as `ENV
+     STRA2US_RELEASE=<value>`. Backend reads the env at
+     startup, exposes via a `/api/admin/release` endpoint.
+     Cleanest separation; survives container restarts;
+     doesn't depend on the runtime tree.
+  2. **Runtime git read.** Backend on startup runs
+     `git -C /app rev-parse --short HEAD` against the
+     bind-mounted `./backend`. Cheap (one syscall) but
+     requires the `.git` directory accessible inside the
+     container — the current volume mount may or may not
+     include it depending on `.dockerignore` shape.
+  3. **VERSION file.** `tools/stage` writes a one-line
+     `./backend/VERSION` file at deploy time; backend
+     reads it. Simplest; no Dockerfile changes; works
+     regardless of git/.dockerignore situation.
+
+  Recommendation: shape **#1** for production (env var is
+  the canonical "build artifact carries identity" pattern)
+  with shape **#3** as the staging fallback (since staging
+  rebuilds on every push and we want the SHA, not just the
+  tag). Render in admin sidebar footer near the Sign-out
+  link, with the format `v<X.Y.Z> (<short-sha>)` — clickable
+  to copy the full SHA, optional.
+
+  Small scope: ~30 lines backend + ~10 lines frontend +
+  build plumbing for #1. Pairs naturally with the cache-bust
+  automation TODO since both are "deploy hygiene"
+  improvements.
+
+- **Extend v1.6.6 instrumentation to catch `HTTPException(500)` too.**
+  v1.6.6's activity-log tagging works for raw exceptions
+  (TypeError, RedisError, etc.) — those propagate up through
+  `await call_next` and hit the middleware's `except Exception`
+  block. But `raise HTTPException(status_code=500, ...)` calls
+  get converted to a `Response(status_code=500)` by Starlette's
+  inner ExceptionMiddleware *before* reaching the activity-log
+  middleware. The middleware sees a normal Response, no
+  exception bubbles, and the activity log entry stays bare
+  `Error (500)` without the `[ExceptionClass]` tag.
+
+  Fix: in the post-call_next path, when `response.status_code
+  == 500` and `exc_name` is None, peek the response body (which
+  Starlette has already serialized from the HTTPException's
+  `detail`) and surface that. Or — cleaner — install a
+  FastAPI exception handler for HTTPException that records
+  the detail to `request.state` before letting Starlette
+  convert it; the activity-log middleware reads that state
+  on the way out.
+
+  Either shape: ~15 lines + a test that exercises a route
+  raising `HTTPException(status_code=500, detail="X")` and
+  asserts the activity-log entry includes `[X]` or
+  `[HTTPException]`. Closes the instrumentation gap surfaced
+  during v1.6.6 monitoring.
+
 - **[HIGH] Automate the `app.js?v=N` cache-bust.** Whenever
   `backend/src/static/app/app.js` changes, the `<script src=
   "/app/_static/app.js?v=N">` references in `device.html` and

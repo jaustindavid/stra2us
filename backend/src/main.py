@@ -25,6 +25,7 @@ import base64
 from urllib.parse import urlencode
 from fastapi import Request, Response
 from fastapi.responses import RedirectResponse
+from starlette.requests import ClientDisconnect
 from core.redis_client import get_redis_client
 from core.admin_auth import verify_password, generate_session_token, verify_session_token, is_rescue_on_default
 from core.perf_log import DEFAULT_THRESHOLD_MS, write_perf_entry
@@ -175,6 +176,27 @@ async def activity_log_middleware(request: Request, call_next):
     try:
         response = await call_next(request)
         status = response.status_code
+    except ClientDisconnect:
+        # Client closed the TCP connection mid-request — typically
+        # during the body read inside `verify_device_request`'s
+        # dependency resolution, before the handler frame even
+        # appears in the stack. The handler never started, no
+        # Redis writes, no signing, no side effects — this is a
+        # network reality, not a server bug.
+        #
+        # Status 499 is nginx's "Client Closed Request" — non-
+        # standard but the established convention for this case.
+        # No `_err_log.exception(...)` call: tracebacks for
+        # disconnects are noise (one per flaky-link retry),
+        # whereas the activity-log entry below preserves the
+        # signal for traffic-pattern visibility.
+        #
+        # Re-raise anyway so Starlette's outer handling continues
+        # cleanly; the response we'd send is moot since the
+        # client is already gone.
+        status = 499
+        exc_name = "ClientDisconnect"
+        raise
     except Exception as e:
         status = 500
         exc_name = type(e).__name__
@@ -212,6 +234,13 @@ async def activity_log_middleware(request: Request, call_next):
                 client_id = request.headers.get("X-Client-ID", "unknown")
                 if 200 <= status < 300:
                     log_status = f"Success ({status})"
+                elif status == 499:
+                    # Distinct from `Error (...)` — these aren't server
+                    # errors. Devices on flaky links retry; recording
+                    # the disconnects without the alarmist "Error"
+                    # framing keeps the activity log honest about
+                    # what's actually a server-side problem.
+                    log_status = f"Client disconnect ({status})"
                 elif exc_name:
                     log_status = f"Error ({status}) [{exc_name}]"
                 else:

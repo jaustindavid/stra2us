@@ -67,17 +67,19 @@ def fake_redis(monkeypatch):
 @pytest.fixture
 def app_with_middleware(fake_redis):
     """Build a FastAPI app with the activity_log_middleware attached
-    and three routes:
-      * /kv/{key} — raises a custom exception (the test target)
-      * /kv/ok    — returns 200 cleanly (negative control)
-      * /admin/x  — raises but is NOT under /kv/ or /q/ (must NOT
-                    write to activity_log)
+    and a few routes:
+      * /kv/{key}    — raises a custom exception (raw-exception path)
+      * /kv/clean/path — returns 200 cleanly (negative control)
+      * /kv/disconnect — raises ClientDisconnect (the network-event path)
+      * /admin/x      — raises but is NOT under /kv/ or /q/ (must NOT
+                        write to activity_log)
     """
     # Import main here so the redis monkeypatch is in place when the
     # module-level FastAPI app is built. We don't use main.app
     # directly — instead, we extract the middleware function and
     # mount it on a fresh app so we don't drag in every other route.
     from main import activity_log_middleware
+    from starlette.requests import ClientDisconnect
 
     a = FastAPI()
     a.middleware("http")(activity_log_middleware)
@@ -85,13 +87,20 @@ def app_with_middleware(fake_redis):
     class CustomFault(Exception):
         """Distinctive exception name for the activity-log tag check."""
 
-    # Order matters: the explicit clean-path route must be
-    # registered BEFORE the `{key:path}` catch-all, otherwise
-    # FastAPI's first-match dispatch sends it into the raising
-    # handler.
+    # Order matters: the explicit routes must be registered BEFORE
+    # the `{key:path}` catch-all, otherwise FastAPI's first-match
+    # dispatch sends them into the raising handler.
     @a.get("/kv/clean/path")
     async def kv_clean():
         return {"ok": True}
+
+    @a.get("/kv/disconnect")
+    async def kv_disconnect():
+        # Simulate the disconnect by raising the exception directly.
+        # In production it fires from inside Starlette's body-read
+        # machinery during `await request.body()`; the middleware
+        # contract is the same regardless of where it surfaces from.
+        raise ClientDisconnect()
 
     @a.get("/kv/{key:path}")
     async def raise_for_kv(key: str):
@@ -184,6 +193,49 @@ def test_kv_200_does_not_tag_activity_log(app_with_middleware, fake_redis):
     # set — falls into the generic-success branch ("Success (200)"),
     # not the Hit/Miss one.
     assert relevant[0]["status"] == "Success (200)"
+
+
+def test_client_disconnect_logs_as_499_no_traceback(
+    app_with_middleware, fake_redis, caplog
+):
+    """A `ClientDisconnect` is a network event, not a server error.
+    The middleware should:
+      * Surface the response as HTTP 499 (nginx's "Client Closed
+        Request" convention), NOT 500.
+      * Skip the `_err_log.exception(...)` traceback log — flaky
+        clients retrying would otherwise spam the error log with
+        useless tracebacks.
+      * Tag the activity-log entry as "Client disconnect (499)",
+        not "Error (...)" — keeps the log honest about what's
+        actually a server-side problem.
+    """
+    app, _ = app_with_middleware
+    client = TestClient(app, raise_server_exceptions=False)
+
+    with caplog.at_level(logging.ERROR, logger="stra2us.errors"):
+        r = client.get("/kv/disconnect", headers={"X-Client-ID": "flaky-dev"})
+
+    # 499 surfaced (test client may map it to whatever Starlette
+    # produces; what matters is the activity-log entry shape).
+    relevant = [
+        fields for stream, fields in fake_redis.xadd_calls
+        if stream == "system:activity_log"
+    ]
+    assert len(relevant) == 1
+    entry = relevant[0]
+    assert entry["client_id"] == "flaky-dev"
+    assert entry["action"] == "GET /kv/disconnect"
+    assert entry["status"] == "Client disconnect (499)"
+
+    # No `stra2us.errors` log record — disconnects don't pollute
+    # the error stream.
+    error_records = [
+        rec for rec in caplog.records if rec.name == "stra2us.errors"
+    ]
+    assert error_records == [], (
+        f"ClientDisconnect should not emit an error log; got "
+        f"{[r.getMessage() for r in error_records]}"
+    )
 
 
 def test_non_kv_500_still_logs_but_skips_activity_entry(
