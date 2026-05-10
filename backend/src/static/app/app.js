@@ -34,11 +34,19 @@
 // server-rendered widgets and produces a per-field dirty-aware
 // payload via `serialize(form)`. `attachSubmitHandler` intercepts
 // browser-native submit so we can POST that payload via fetch.
+// Cache-bust the imported module separately from app.js's own
+// ?v= query string — ES module imports are cached by URL, and
+// the browser doesn't invalidate this URL just because app.js
+// (the importer) was loaded with a fresh ?v=. Bump whenever
+// `forms/touched_state.js` changes; track in sync with app.js's
+// own `?v=` for sanity. See TODO.md's "[HIGH] Automate the
+// app.js?v=N cache-bust" entry — automating this is the
+// real fix for the recurring footgun this caused.
 import {
     init as initTouchedState,
     serialize as serializeForm,
     attachSubmitHandler,
-} from './forms/touched_state.js';
+} from './forms/touched_state.js?v=12';
 
 const ADMIN_API = '/api/admin';
 const APP_API   = '/api/app';

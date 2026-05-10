@@ -40,8 +40,13 @@ def _read(path):
 
 def test_app_js_imports_touched_state():
     src = _read(_APP_JS)
+    # v1.6.8: the import URL may carry a `?v=N` cache-bust query
+    # string (ES module imports are cached by URL; bumping app.js's
+    # own `?v=` doesn't invalidate this import). Tolerate either
+    # shape — what matters is that the import targets the right
+    # module path.
     assert re.search(
-        r"import\s*\{[^}]*\bserialize[^}]*\}\s*from\s*['\"]\./forms/touched_state\.js['\"]",
+        r"import\s*\{[^}]*\bserialize[^}]*\}\s*from\s*['\"]\./forms/touched_state\.js(\?v=\d+)?['\"]",
         src,
     ), "app.js must `import` from forms/touched_state.js"
 
