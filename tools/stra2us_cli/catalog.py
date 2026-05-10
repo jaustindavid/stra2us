@@ -97,13 +97,16 @@ class Var(BaseModel):
     pattern: str | None = None
     help_markdown: str | None = None
     write_only: bool = False
-    # Consumer-side hint that this key carries sensitive material and
-    # must be stored + served encrypted (Stra2us per-record encrypted
-    # flag, ext type 0x21 wire format). Stra2us itself does not act on
-    # this field — it's a declarative pairing for consumer drift tests
-    # ("every catalog `encrypted: true` is actually stored encrypted")
-    # and name-pattern lints. See docs/fr_encrypted_values.md
-    # ("Catalog hint" section) for the full rationale.
+    # Declares that this key carries sensitive material and must be
+    # stored + served encrypted (Stra2us per-record encrypted flag,
+    # ext type 0x21 wire format). As of v1.6.7 the CLI's catalog-aware
+    # write path (`stra2us set`) honors this field directly: the
+    # operator's `--encrypted` flag is no longer load-bearing for
+    # catalog keys, the catalog is. Same shape on the server side
+    # (`routes_app_form.py` form-submit, v1.6.5+). The raw-KV path
+    # (`stra2us put`) doesn't consult the catalog and keeps
+    # `--encrypted` operator-controlled. See docs/fr_encrypted_values.md
+    # for the full rationale + the ext type 0x21 wire format details.
     encrypted: bool = False
     # Customer-facing title for the `/app/<app>/<device>` UI (see
     # docs/fr_application_view.md). **Presence is the visibility gate**:
@@ -251,6 +254,16 @@ class Theme(BaseModel):
     logo_asset: str | None = None
     logo_alt: str | None = None
     product_name: str | None = None
+    # v1.6.7: per-app favicon. References a file in the catalog's
+    # `_assets/` bundle (same shape as `logo_asset`). Renders as
+    # `<link rel="icon">` on the customer page so the browser tab,
+    # bookmark, and home-screen icon match the product brand.
+    # When unset, the default favicon at `/app/_static/favicon.svg`
+    # is used. Should be a square image (browsers pick from
+    # multiple sizes if multiple icon links are emitted; we keep
+    # it single-asset for simplicity). Format-agnostic — `.svg`,
+    # `.png`, `.ico` all work in modern browsers.
+    favicon_asset: str | None = None
 
 
 class Ui(BaseModel):

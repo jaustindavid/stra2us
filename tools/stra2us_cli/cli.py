@@ -571,6 +571,40 @@ def cmd_set(args: argparse.Namespace) -> int:
 
     full_key = kv_path(cat.app, args.key, device)
 
+    # v1.6.7: honor the catalog's `encrypted:` declaration over the
+    # `--encrypted` CLI flag. Pre-v1.6.7 the operator picked
+    # encryption at write time and the catalog's `encrypted: true`
+    # was a documentation-only hint. The split was wrong: an
+    # operator setting a catalog-declared key shouldn't be able to
+    # skip the encryption the catalog declares (or vice versa).
+    # Catalog now drives the decision; the CLI flag is preserved
+    # for `stra2us put` (raw KV path with no catalog).
+    encrypted = bool(var.encrypted)
+    if args.encrypted and not encrypted:
+        # Operator passed --encrypted on a catalog field that
+        # doesn't declare encryption. Loud no-op rather than silent
+        # — they likely thought it'd take effect, which it would
+        # have pre-v1.6.7. Surface the policy change.
+        print(
+            f"warning: --encrypted is ignored for catalog-declared keys "
+            f"(catalog says {args.key!r} is not encrypted). The catalog "
+            f"is authoritative for encryption on `stra2us set`; use "
+            f"`stra2us put` if you need ad-hoc raw KV with --encrypted, "
+            f"or update the catalog to set `encrypted: true` on this "
+            f"field.",
+            file=sys.stderr,
+        )
+    elif not args.encrypted and encrypted:
+        # Operator omitted --encrypted but the catalog says encrypted.
+        # Quiet info — we're auto-encrypting, which is the right
+        # behavior, but worth a one-liner so the operator knows.
+        print(
+            f"info: catalog declares {args.key!r} encrypted; storing "
+            f"with encryption (--encrypted not required for catalog "
+            f"keys).",
+            file=sys.stderr,
+        )
+
     try:
         client = _build_client(args)
     except ConfigError as e:
@@ -578,12 +612,12 @@ def cmd_set(args: argparse.Namespace) -> int:
         return 2
 
     try:
-        client.put(full_key, value, encrypted=args.encrypted)
+        client.put(full_key, value, encrypted=encrypted)
     except Stra2usError as e:
         print(f"error: {e}", file=sys.stderr)
         return 4
 
-    enc = " [encrypted]" if args.encrypted else ""
+    enc = " [encrypted]" if encrypted else ""
     print(f"set: {client.base_url}/kv/{full_key} → {value!r}{enc}")
     return 0
 
@@ -694,7 +728,13 @@ def _build_parser() -> argparse.ArgumentParser:
     sp_set.add_argument(
         "--encrypted",
         action="store_true",
-        help="mark this record encrypted on the server; subsequent GETs ship as ciphertext (see docs/fr_encrypted_values.md)",
+        help=(
+            "DEPRECATED for catalog keys (v1.6.7+): the catalog's "
+            "`encrypted:` declaration is authoritative on `stra2us set`. "
+            "Passing --encrypted on a key whose catalog says not-encrypted "
+            "warns and is ignored; the catalog drives the decision. Use "
+            "`stra2us put` if you need ad-hoc raw KV writes with --encrypted."
+        ),
     )
     return p
 
