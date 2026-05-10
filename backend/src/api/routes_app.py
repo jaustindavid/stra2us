@@ -92,6 +92,7 @@ async def _render_device_page(app: str, device: str) -> HTMLResponse:
     settings_html = await _render_settings_section(app, device, catalog)
     telemetry_topic = _resolve_telemetry_topic(app, device, catalog)
     heartbeat_seconds = _resolve_heartbeat_seconds(catalog)
+    favicon_href = _resolve_favicon_href(app, catalog)
     rendered = (
         template
         .replace("{{APP}}", app)
@@ -100,6 +101,7 @@ async def _render_device_page(app: str, device: str) -> HTMLResponse:
         .replace("{{SETTINGS_SECTION}}", settings_html)
         .replace("{{TELEMETRY_TOPIC}}", telemetry_topic)
         .replace("{{HEARTBEAT_SECONDS}}", str(heartbeat_seconds))
+        .replace("{{FAVICON_HREF}}", favicon_href)
     )
     # `Cache-Control: no-store` so a `window.location.reload()` after
     # form save always re-renders against fresh KV. Without this,
@@ -138,6 +140,37 @@ def _resolve_heartbeat_seconds(catalog: dict | None) -> int:
     if isinstance(declared, int) and declared > 0:
         return declared
     return 60
+
+
+_DEFAULT_FAVICON_HREF = "/app/_static/favicon.svg"
+
+
+def _resolve_favicon_href(app: str, catalog: dict | None) -> str:
+    """v1.6.7 (TODO #7): per-app favicon URL with default fallback.
+
+    Catalog `theme.favicon_asset` (if set) is rendered as
+    `/app/<app>/_assets/<file>` — same shape as `logo_asset`. When
+    unset (or the catalog isn't published yet), falls back to the
+    default at `/app/_static/favicon.svg`. Cosmetic-but-noisy:
+    pre-v1.6.7 the customer page had no `<link rel="icon">` so
+    every page load triggered a speculative `/favicon.ico` request
+    that 404'd, polluting the browser console.
+
+    The catalog-side asset is validated by `catalog_lint`'s
+    asset-listing rules (must exist in the bundle, filename shape).
+    No additional escaping needed here — the catalog `app` slug is
+    already constrained to `^[a-z][a-z0-9_]*$`, and the asset
+    filename was sanity-checked at publish time.
+    """
+    if not isinstance(catalog, dict):
+        return _DEFAULT_FAVICON_HREF
+    theme = catalog.get("theme")
+    if not isinstance(theme, dict):
+        return _DEFAULT_FAVICON_HREF
+    favicon_asset = theme.get("favicon_asset")
+    if not isinstance(favicon_asset, str) or not favicon_asset:
+        return _DEFAULT_FAVICON_HREF
+    return f"/app/{app}/_assets/{favicon_asset}"
 
 
 async def _render_settings_section(app: str, device: str,
@@ -207,16 +240,29 @@ async def device_page(app: str, device: str, request: Request):
 
 @router.get("/api/app/lookup_device", include_in_schema=False)
 async def lookup_device(name: str):
-    """Resolve a device name → its app via a Redis SCAN of `kv:*/<name>/*`.
-    Returns `{app: "<app>"}` or 404. Public — no auth required.
+    """Resolve a device name → its app. Returns `{app: "<app>"}` or 404.
+    Public — no auth required.
 
     Captcha-gated at the edge in production (Cloudflare Turnstile or
     equivalent) to prevent device-name enumeration. See
     docs/fr_application_view.md > "Anti-enumeration".
 
-    Lookup mechanism: scan-on-demand. Linear in fleet size; documented
-    as a known issue with a `device_to_app:<name>` reverse-index fix
-    if perf ever matters at scale.
+    Lookup mechanism (v1.6.7+):
+
+    1. **`device_to_app:<name>` reverse index** — written at provision
+       time by `routes_admin.py:provision_device`. O(1) Redis GET.
+       Resolves freshly-provisioned devices that haven't yet done
+       their first KV write — pre-v1.6.7 those returned 404 because
+       the only "exists" predicate was a `kv:*/<name>/*` SCAN hit,
+       which forced the operator workflow into "provision → flash →
+       device heartbeats → configure" instead of the natural
+       "provision → configure → flash."
+
+    2. **KV SCAN fallback** — for devices provisioned before v1.6.7
+       (no reverse-index entry yet). Linear in fleet size, but
+       only fires for the legacy population. On a hit, the
+       reverse-index entry is backfilled as a side effect, so the
+       legacy population self-heals on first lookup.
 
     Constraint: device names are unique across apps. (See FR.)
     """
@@ -226,6 +272,20 @@ async def lookup_device(name: str):
         raise HTTPException(status_code=404, detail="No device by that name")
 
     redis = get_redis_client()
+
+    # 1. Fast path: reverse index.
+    indexed = await redis.get(f"device_to_app:{name}")
+    if indexed is not None:
+        # Redis returns bytes by default; decode if needed. The
+        # codebase elsewhere handles both shapes (str-mode and
+        # bytes-mode clients) — match that defensiveness here.
+        if isinstance(indexed, bytes):
+            indexed = indexed.decode("utf-8")
+        return {"app": indexed}
+
+    # 2. Fallback: SCAN for legacy devices that pre-date the reverse
+    #    index. Materialize the index on hit so the next lookup goes
+    #    fast.
     pattern = f"kv:*/{name}/*"
     cursor = 0
     while True:
@@ -236,7 +296,16 @@ async def lookup_device(name: str):
             # Key shape: kv:<app>/<name>/<rest>. Extract <app>.
             parts = key.split(":", 1)[1].split("/")
             if len(parts) >= 3 and parts[1] == name:
-                return {"app": parts[0]}
+                app_name = parts[0]
+                # Backfill the reverse index — turns a O(N) scan into
+                # an O(1) get for the next lookup of this device.
+                # Best-effort: failure here doesn't block the response,
+                # the next lookup will scan again and try once more.
+                try:
+                    await redis.set(f"device_to_app:{name}", app_name)
+                except Exception:
+                    pass
+                return {"app": app_name}
         if cursor == 0:
             break
 

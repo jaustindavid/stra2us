@@ -258,6 +258,18 @@ async def provision_device(payload: DeviceProvision, _: dict = Depends(require_a
         secret = None
 
     await redis.set(f"client:{payload.client_id}:acl", json.dumps(acl))
+    # v1.6.7: reverse-index `<device_name> → <app>` so the customer
+    # landing form's `lookup_device` finds freshly-provisioned
+    # devices BEFORE they've done their first KV write. Pre-v1.6.7
+    # the lookup scanned `kv:*/<name>/*` and returned 404 for any
+    # device that hadn't heartbeated yet — forcing the operator
+    # workflow into "provision → flash → device heartbeats →
+    # configure" instead of the natural "provision → configure →
+    # flash". The reverse index closes that gap and incidentally
+    # turns the lookup from O(N) scan into O(1) get. See
+    # `routes_app.py:lookup_device` for the read side + the
+    # backfill-on-scan-hit fallback for legacy devices.
+    await redis.set(f"device_to_app:{payload.client_id}", payload.app)
 
     return {
         "client_id": payload.client_id,
@@ -282,6 +294,12 @@ async def revoke_client(client_id: str, _: dict = Depends(require_admin_superuse
     redis = get_redis_client()
     await redis.delete(f"client:{client_id}:secret")
     await redis.delete(f"client:{client_id}:acl")
+    # v1.6.7: also clear the reverse-index entry so a deleted
+    # device doesn't continue to resolve through the customer
+    # landing form's lookup. Without this, the lookup would
+    # cheerfully return the (now-defunct) app name for a
+    # device whose secret + ACL are gone — confusing UX.
+    await redis.delete(f"device_to_app:{client_id}")
     return {"status": "ok"}
 
 # --- Admin users ---
