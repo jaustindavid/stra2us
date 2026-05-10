@@ -141,6 +141,7 @@ function serialize(form) {
     const dirty = el.dataset.dirty === "true";
     const writeOnly = el.dataset.writeOnly === "true";
     const fromDefault = el.dataset.fromDefault === "true";
+    const encrypted = el.dataset.encrypted === "true";
     if (writeOnly && !dirty) {
       // Omit entirely — server treats absence as "preserve current."
       continue;
@@ -155,6 +156,22 @@ function serialize(form) {
       // next page load. Pre-v1.6.7 this materialized the default
       // into per-device KV, surprising the operator who only
       // edited one other field.
+      continue;
+    }
+    if (encrypted && !dirty) {
+      // v1.6.8: untouched encrypted-non-write_only field. The
+      // renderer deliberately keeps the plaintext out of the HTML
+      // (data-original=""); the value is fetched via the Reveal
+      // flow when the operator wants to see it. An untouched
+      // submit's clean branch would send the empty data-original
+      // and clobber the stored encrypted value — turning "open
+      // the page and click Save" into accidental data loss. Skip
+      // here; the server preserves the stored value when the
+      // field is absent from the POST body. Explicit clears still
+      // work: selecting and deleting in the input fires an
+      // `input` event → dirty=true → falls through to the
+      // serialize-live-value branch below, submits empty as the
+      // operator intended.
       continue;
     }
     out[name] = dirty
