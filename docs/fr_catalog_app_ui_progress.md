@@ -1788,6 +1788,166 @@ Verification path:
    sidebar is a top bar, nav-links scroll horizontally, content
    gets the rest of the viewport.
 
+### v1.6.7 — four-TODO bundle: reverse-index lookup, CLI catalog-honors-encrypted, form-submit-skips-defaults, favicon *(2026-05-10)*
+
+Four small, well-scoped TODOs landing together because each is
+~30 lines of code with disjoint surface area, and bundling
+collapses four staging cycles into one. Branch off `main`, four
+commits (one per TODO, individually revertable), single
+deploy/promote.
+
+**#12 — `lookup_device` reverse-index.** Pre-v1.6.7 the customer
+landing form's name lookup established "device exists" by
+SCAN-ing for any `kv:*/<name>/*` record. A device that was
+provisioned but hadn't yet done its first KV write returned 404
+— forcing the operator workflow into "provision → flash → device
+heartbeats → configure" instead of the natural "provision →
+configure → flash." That's a real workflow gap: it forces
+software-side prep (provisioning + initial config) to wait for
+hardware-side flash + first heartbeat, when those teams could
+otherwise be fully decoupled.
+
+Fix in two halves. (1) `provision_device`
+(`backend/src/api/routes_admin.py:193`) writes
+`device_to_app:<client_id>` → `<app>` after the ACL.
+(2) `lookup_device` (`backend/src/api/routes_app.py:208`)
+consults the reverse index first (O(1)), falls back to the SCAN
+for legacy devices, and backfills the index entry on a SCAN hit
+so the legacy population self-heals on first lookup. The
+`revoke_client` endpoint clears the index entry to avoid stale
+pointers. Already foreshadowed in `lookup_device`'s pre-v1.6.7
+docstring as the perf fix; closes both bugs (workflow gap + scan
+perf) in one change.
+
+**#9 — `stra2us set` honors catalog `encrypted:`.** The CLI
+sibling of v1.6.5's customer-page form-submit catalog-honors
+work. Pre-v1.6.7 the operator's `--encrypted` flag drove
+encryption at write time and the catalog's `encrypted: true` was
+documentation-only metadata. Now the catalog is authoritative
+for the catalog-aware write path: `cmd_set` reads `var.encrypted`
+and ignores `--encrypted`. Mismatches surface as stderr
+diagnostics (warning when the operator passed `--encrypted` on
+a catalog that says no; info when the operator omitted it on
+a catalog that says yes — neither is silent). The raw-KV
+`stra2us put` path is unchanged (no catalog consulted,
+operator-controlled `--encrypted`). The `Var.encrypted` field
+comment in `tools/stra2us_cli/catalog.py` was updated to
+reflect that Stra2us now does act on it. Help text on
+`set --encrypted` marks the flag as deprecated for catalog keys.
+
+**#6 — Form-submit stuffs catalog defaults into untouched
+fields.** Surfaced during v1.6.5 verification: the operator
+edited one field (wifi_password), clicked Save, and every
+*other* field on the form ended up with its catalog `default:`
+materialized to per-device KV. The touched-state serializer's
+clean-field branch was emitting `data-original` (which carried
+the catalog default) for every untouched field, and the form-
+submit handler dutifully wrote them all.
+
+Fix in two halves. (1) Renderer plumbing: `value_resolver`
+already tracked `from_default: bool` on `ResolvedValue`;
+`page_renderer` now threads it through to `_render_setting_card`
+and emits `data-from-default="true"` on the input element when
+the current value came from step 3 of the resolution chain.
+(2) Serializer: `forms/touched_state.js`'s `serialize()` now
+skips clean+from-default fields with the same `continue` shape
+as the existing write_only-omit branch. Effect: an operator
+saving one field's edit no longer materializes per-device
+overrides for every other field's catalog default. The
+catalog's resolution chain (per-device → app-scope → catalog
+default) keeps producing the same value on the next page load.
+
+**#7 — Customer app page favicon (per-app + default
+fallback).** Pre-v1.6.7 the customer page emitted no
+`<link rel="icon">`, so browsers speculatively requested
+`/favicon.ico` from the page origin and got 404s — cosmetic
+console noise that obscured real errors during ops triage.
+
+Two-part fix. (1) **Default fallback**: shipped a small SVG
+at `backend/src/static/app/favicon.svg` (brand-color square,
+"S" mark) served at `/app/_static/favicon.svg`. Both
+`landing.html` and `device.html` reference it via
+`<link rel="icon">`. (2) **Per-app override**: new optional
+`theme.favicon_asset` field on the catalog's Theme model
+(`tools/stra2us_cli/catalog.py`), validated by the publish
+lint with the same "filename pattern + must-exist-in-bundle"
+rules as `logo_asset`. When set, `_render_device_page`
+substitutes the resolved per-app URL
+(`/app/<app>/_assets/<file>`) into a new `{{FAVICON_HREF}}`
+template placeholder; when unset, falls back to the default
+static URL. The lint's unused-asset warning treats
+`favicon_asset` as referenced (parallel to `logo_asset`) so
+operators publishing a per-app favicon don't trip
+"asset present but not referenced."
+
+**Cache-bust.** #6 modifies `forms/touched_state.js`. Bumped
+`app.js?v=10 → ?v=11` in `landing.html` and `device.html` —
+required because Cloudflare's edge + browser cache key on
+the URL including `?v=`. (See v1.6.5's cache-bust runbook
+entry; this is the same pattern.)
+
+**Tests.** Backend 279 → 286 (+7); tools 183 → 187 (+4);
+total +11 across both suites:
+
+* `test_lookup_device_reverse_index.py` (+9 backend) — provision
+  writes index, re-provision overwrites, lookup uses index,
+  404 when device unknown, SCAN fallback for legacy, backfill
+  on SCAN hit, revoke clears index, slash-in-name + empty-name
+  rejection preserved.
+* `test_cmd_set_catalog_encrypted.py` (+5 tools) — the four
+  scenarios (catalog-yes vs. catalog-no × flag-passed vs.
+  flag-omitted) plus a sentinel that `stra2us put`'s raw-KV
+  path is unchanged.
+* `test_page_renderer.py` (+3 backend) — `data-from-default`
+  emitted on default-sourced fields, omitted for stored-value
+  fields, and not on the encrypted-Reveal branch.
+* `test_touched_state_js.py` (+1 backend) — serializer's
+  from-default skip branch present (mirrors the write_only
+  test).
+* `test_device_page_integration.py` (+3 backend) — favicon
+  defaults to static (no theme, no favicon_asset), and uses
+  per-app asset URL when set.
+* `test_catalog_lint.py` (+4 tools) — `theme.favicon_asset`
+  filename shape, must-exist, present-OK, and not flagged as
+  unused.
+
+**Rollout.** Branch `v1.6.7-bundle` off `main`, four commits
+in this order (mostly to keep static + non-static work
+clustered):
+
+1. **#12** — Reverse-index lookup (backend; no static; smallest
+   verification footprint, ship first)
+2. **#9** — `stra2us set` honors catalog (CLI; no static)
+3. **#6** — Form-submit defaults plumbing (frontend + backend;
+   bumps cache-bust)
+4. **#7** — Favicon (frontend + lint; pairs naturally with #6's
+   static touch)
+
+Per-fix verification on staging:
+
+* **#12.** Provision a device via admin UI / `provision_device`,
+  hit `/app/` landing form with the device name *before* any
+  KV writes — should resolve to its app (pre-v1.6.7: 404).
+  Then `redis-cli GET device_to_app:<id>` inside the staging
+  container — should return the app name.
+* **#9.** Inside `tools/stage bash`: write a catalog with one
+  `encrypted: true` field and one without; `stra2us set` each
+  with and without the flag; verify the four-cell matrix
+  (info / silent / warning / silent) on stderr and the `:enc`
+  sidecar state on the resulting KV record.
+* **#6.** Customer page on a device with no per-device KV
+  records (so most fields render their catalog default).
+  Edit one field, save. Inspect Redis: only the touched
+  field's KV path should now exist; the other fields' paths
+  should remain absent. Pre-v1.6.7 they'd all be present
+  with their catalog default values.
+* **#7.** Hard-reload the customer page; browser tab favicon
+  should display (default brand square). Then publish a
+  catalog with `theme.favicon_asset: brand.svg` (with the
+  asset in `_assets/`); reload — tab favicon should switch
+  to the per-app asset. Console should be 404-free where
+  pre-v1.6.7 it had a `/favicon.ico` 404.
+
 ### What's left
 
 Nothing on the catalog-app-ui FR's followup list. The

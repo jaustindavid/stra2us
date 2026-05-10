@@ -373,6 +373,22 @@ def _lint_theme(catalog: Catalog, asset_listing: set[str] | None,
                 f"references {theme.logo_asset!r} but _assets/{theme.logo_asset} "
                 "not in bundle",
             ))
+    # v1.6.7: same shape of validation for `theme.favicon_asset`.
+    # Filename pattern enforced; asset-must-exist when we have a
+    # bundle listing to compare against.
+    if theme.favicon_asset is not None:
+        if not ASSET_FILENAME_RE.match(theme.favicon_asset):
+            issues.append(LintIssue(
+                "error", "theme.favicon_asset",
+                f"asset filename must match {ASSET_FILENAME_RE.pattern}, "
+                f"got {theme.favicon_asset!r}",
+            ))
+        elif asset_listing is not None and theme.favicon_asset not in asset_listing:
+            issues.append(LintIssue(
+                "error", "theme.favicon_asset",
+                f"references {theme.favicon_asset!r} but "
+                f"_assets/{theme.favicon_asset} not in bundle",
+            ))
     if theme.logo_alt is not None:
         if len(theme.logo_alt) > LOGO_ALT_MAX_LEN:
             issues.append(LintIssue(
@@ -447,6 +463,8 @@ def lint_catalog(catalog: Catalog, *,
         referenced: set[str] = set()
         if catalog.theme and catalog.theme.logo_asset:
             referenced.add(catalog.theme.logo_asset)
+        if catalog.theme and catalog.theme.favicon_asset:
+            referenced.add(catalog.theme.favicon_asset)
         # Markdown blocks may reference `/app/<app>/_assets/<file>` via
         # `<img src=...>`; that resolution lives at render time. P0
         # only knows about explicit `theme.logo_asset` references, so

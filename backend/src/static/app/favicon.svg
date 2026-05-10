@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!--
+    Default Stra2us favicon. Catalog can override per-app via
+    `theme.favicon_asset`; this is the fallback for any app
+    that hasn't set one. Single-color SVG keeps the file small
+    (~250 bytes) and scales cleanly at any DPI. Brand-color
+    accent matches the v1.0 reference theme; operators
+    publishing a per-app catalog should override.
+  -->
+  <rect width="32" height="32" rx="6" fill="#5b3fb8"/>
+  <text x="16" y="22" text-anchor="middle"
+        font-family="system-ui, -apple-system, sans-serif"
+        font-weight="700" font-size="20" fill="white">S</text>
+</svg>
