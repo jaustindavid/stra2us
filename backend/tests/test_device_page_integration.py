@@ -262,7 +262,7 @@ def test_unlabelled_vars_omitted(fake_redis):
 # ----- v1.6.7: favicon plumbing (TODO #7) ---------------------------
 # The customer device page emits a `<link rel="icon">` whose href
 # resolves from the catalog's `theme.favicon_asset` if set, else
-# falls back to the default at `/app/_static/favicon.svg`. Pre-v1.6.7
+# falls back to the default at `/app/_static/favicon.png`. Pre-v1.6.7
 # the page emitted no favicon link, so browsers speculatively
 # requested `/favicon.ico` and got 404s — cosmetic noise in the
 # console.
@@ -271,7 +271,7 @@ def test_favicon_defaults_to_static_when_catalog_has_no_theme(fake_redis):
     """No catalog at all → no theme → default favicon."""
     response = _run(routes_app._render_device_page("uncataloged", "dev1"))
     body = response.body.decode("utf-8")
-    assert '<link rel="icon" href="/app/_static/favicon.svg">' in body
+    assert '<link rel="icon" href="/app/_static/favicon.png">' in body
 
 
 def test_favicon_defaults_to_static_when_theme_omits_favicon(fake_redis):
@@ -283,7 +283,7 @@ def test_favicon_defaults_to_static_when_theme_omits_favicon(fake_redis):
     })
     response = _run(routes_app._render_device_page("demo", "dev1"))
     body = response.body.decode("utf-8")
-    assert '<link rel="icon" href="/app/_static/favicon.svg">' in body
+    assert '<link rel="icon" href="/app/_static/favicon.png">' in body
 
 
 def test_favicon_uses_per_app_asset_when_set(fake_redis):
@@ -301,4 +301,4 @@ def test_favicon_uses_per_app_asset_when_set(fake_redis):
     # — the per-app override replaces it. (The static filename may
     # appear in unrelated places like comments; we narrow the check
     # to the actual link tag the browser consumes.)
-    assert '<link rel="icon" href="/app/_static/favicon.svg">' not in body
+    assert '<link rel="icon" href="/app/_static/favicon.png">' not in body

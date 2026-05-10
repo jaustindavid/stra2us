@@ -142,7 +142,7 @@ def _resolve_heartbeat_seconds(catalog: dict | None) -> int:
     return 60
 
 
-_DEFAULT_FAVICON_HREF = "/app/_static/favicon.svg"
+_DEFAULT_FAVICON_HREF = "/app/_static/favicon.png"
 
 
 def _resolve_favicon_href(app: str, catalog: dict | None) -> str:
