@@ -2,6 +2,173 @@
 
 ## Near-term
 
+- **Generalize `widget: radio` to any enum-backed field.** Today
+  `widget: radio` is gated by lint to `type: string` + `enum:` only;
+  `type: int` + enum and `type: bool` (implicit `[true, false]`)
+  both fall through to `<select>` with no radio option. The lint
+  restriction is historical (radio was added during P0 specifically
+  for the string-enum case), not principled — a binary flag rendered
+  as a radio is a UX win regardless of whether the underlying value
+  is `"on"`/`"off"` or `1`/`0` or `true`/`false`.
+
+  **Design principle (this iteration): `<select>` is the default
+  for every enum-having field; `widget: radio` is the explicit
+  opt-in.** Predictable default, no auto-magic. Keeps the
+  catalog-author's mental model simple: "want radios? say so."
+  Avoids surprise behavior where a `type: bool` field
+  unilaterally renders differently from a `type: int` field
+  that's also enum-shaped.
+
+  Two changes:
+  1. **Lint** (`catalog_lint.py:_lint_field_widget`): replace
+     `if var.type != "string"` with `if var.enum is None`. The
+     requirement becomes "must have an enum to pick from" rather
+     than "must be a specific type." `type: bool` doesn't need
+     an explicit enum (it's implicit `[true, false]`); the lint
+     can special-case bool to skip the enum-required check, OR
+     `type: bool` can be modeled as having a synthetic enum
+     during validation.
+  2. **Renderer** (`widget_renderer.py`): the `widget == "radio"`
+     dispatch fires for any enum-having field, regardless of
+     `type`. `_render_radio` may need small tweaks to handle
+     non-string values — `JSON.stringify` the value for the
+     radio's `value` attribute; the form-submit decoder
+     already does `json.loads` fallback so `"1"` round-trips
+     as int `1`, `"true"` as bool `True`.
+
+  Subsumes the earlier "type: bool should render as a radio"
+  TODO — under the new design, `type: bool` renders as `<select>`
+  by default (consistent with every other enum-field), and
+  `widget: radio` opts in. Operator who wants a true/false radio
+  writes:
+
+  ```yaml
+  enabled:
+    type: bool
+    default: false
+    widget: radio
+  ```
+
+  ~30 lines + test updates. Touches lint + renderer + a couple
+  existing tests that assert specific shapes.
+
+- **Surface the running release version in the admin UI.**
+  Today's "what's actually deployed?" answer requires SSHing
+  to the host and running `tools/stage status` (or
+  `git rev-parse --short HEAD` in `$PROD_DIR`). For routine
+  "did my deploy go?" / "is staging on v1.6.6 yet?" questions,
+  a visible version badge in the admin sidebar (or a small
+  status panel) closes the loop without leaving the browser.
+  This TODO was filed mid-debug after a missed deploy step
+  left staging on v1.6.5 while v1.6.6 instrumentation was
+  expected — a "Running: v1.6.5 (4b28654)" badge would have
+  caught it instantly.
+
+  Three implementation shapes to weigh:
+  1. **Build-time env var.** `tools/stage promote` and
+     `tools/stage deploy` pass `--build-arg RELEASE_TAG=<tag>`
+     (or `<commit>`); Dockerfile bakes it as `ENV
+     STRA2US_RELEASE=<value>`. Backend reads the env at
+     startup, exposes via a `/api/admin/release` endpoint.
+     Cleanest separation; survives container restarts;
+     doesn't depend on the runtime tree.
+  2. **Runtime git read.** Backend on startup runs
+     `git -C /app rev-parse --short HEAD` against the
+     bind-mounted `./backend`. Cheap (one syscall) but
+     requires the `.git` directory accessible inside the
+     container — the current volume mount may or may not
+     include it depending on `.dockerignore` shape.
+  3. **VERSION file.** `tools/stage` writes a one-line
+     `./backend/VERSION` file at deploy time; backend
+     reads it. Simplest; no Dockerfile changes; works
+     regardless of git/.dockerignore situation.
+
+  Recommendation: shape **#1** for production (env var is
+  the canonical "build artifact carries identity" pattern)
+  with shape **#3** as the staging fallback (since staging
+  rebuilds on every push and we want the SHA, not just the
+  tag). Render in admin sidebar footer near the Sign-out
+  link, with the format `v<X.Y.Z> (<short-sha>)` — clickable
+  to copy the full SHA, optional.
+
+  Small scope: ~30 lines backend + ~10 lines frontend +
+  build plumbing for #1. Pairs naturally with the cache-bust
+  automation TODO since both are "deploy hygiene"
+  improvements.
+
+- **Extend v1.6.6 instrumentation to catch `HTTPException(500)` too.**
+  v1.6.6's activity-log tagging works for raw exceptions
+  (TypeError, RedisError, etc.) — those propagate up through
+  `await call_next` and hit the middleware's `except Exception`
+  block. But `raise HTTPException(status_code=500, ...)` calls
+  get converted to a `Response(status_code=500)` by Starlette's
+  inner ExceptionMiddleware *before* reaching the activity-log
+  middleware. The middleware sees a normal Response, no
+  exception bubbles, and the activity log entry stays bare
+  `Error (500)` without the `[ExceptionClass]` tag.
+
+  Fix: in the post-call_next path, when `response.status_code
+  == 500` and `exc_name` is None, peek the response body (which
+  Starlette has already serialized from the HTTPException's
+  `detail`) and surface that. Or — cleaner — install a
+  FastAPI exception handler for HTTPException that records
+  the detail to `request.state` before letting Starlette
+  convert it; the activity-log middleware reads that state
+  on the way out.
+
+  Either shape: ~15 lines + a test that exercises a route
+  raising `HTTPException(status_code=500, detail="X")` and
+  asserts the activity-log entry includes `[X]` or
+  `[HTTPException]`. Closes the instrumentation gap surfaced
+  during v1.6.6 monitoring.
+
+- **[HIGH] Automate the `app.js?v=N` cache-bust.** Whenever
+  `backend/src/static/app/app.js` changes, the `<script src=
+  "/app/_static/app.js?v=N">` references in `device.html` and
+  `landing.html` must be bumped to a new `N` — otherwise browsers
+  and Cloudflare's edge cache the old `?v=N` URL and serve stale
+  JS even after a fresh deploy. Operator discipline alone is
+  insufficient: this footgun chewed ~30 minutes of v1.6.5
+  verification when the bug-#1 (peek-while-typing) commit
+  modified `app.js` without bumping the version, and on prior
+  releases the same pattern bit at least twice (filed
+  informally in `csp_admin_audit.md` and `fr_catalog_app_ui_progress.md`'s
+  "Three diagnostic gotchas" section).
+
+  Two fix shapes worth considering:
+
+  1. **Pre-commit hook.** Lints the staged diff: if `app.js`
+     changed but the `?v=N` references in `device.html` /
+     `landing.html` didn't, error out with a clear message
+     ("bump `?v=N` in landing.html + device.html before
+     committing"). Blocks the bad commit at its source.
+     Lightweight, no build-time machinery, no runtime cost.
+     Works with the existing git workflow without changes to
+     `tools/stage`.
+
+  2. **Build-time hash injection.** A small step in the
+     Dockerfile (or `tools/stage deploy`) that hashes
+     `app.js`, replaces the `?v=N` token in the HTML files
+     with `?v=<hash>`. Removes the manual bump entirely;
+     hash changes whenever the file content changes,
+     cache-bust is automatic. More invasive than #1 (touches
+     build pipeline; the hash leaks into the served HTML)
+     but eliminates the operator-discipline failure mode.
+
+  Recommendation: ship **#1** as the first fix — it closes the
+  bite immediately with minimal moving parts. **#2** is the
+  proper long-term answer; defer until #1 has lived through
+  a few releases and we know what edge cases it catches.
+
+  Should ride along with whatever change next touches the
+  static surface. The hook lives at `.git/hooks/pre-commit`
+  (or `.githooks/pre-commit` if we standardize via
+  `core.hooksPath` to share across machines). Detection
+  shape: `git diff --cached --name-only` includes
+  `backend/src/static/app/app.js` AND does NOT include
+  one of `backend/src/static/app/{landing,device}.html`
+  → fail with the bump-required message.
+
 - ~~**Add BuildKit cache mounts to `backend/Dockerfile`.**~~
   Landed 2026-05-09 in v1.6.1. `--mount=type=cache,...` on the
   three remote-fetching `RUN` lines (apt-get for system deps,
@@ -225,6 +392,41 @@
   returning "just now" while the 5s+ branches return "<N><unit>
   ago"; both callers (`Last seen ${...}` and the activity-row
   `<span class="activity-when">`) dropped their hardcoded " ago".
+
+- **Form-submit stuffs catalog defaults into every untouched field.**
+  Observed on the customer device page during v1.6.5 verification:
+  the operator edited one field (wifi_password), clicked Save, and
+  every *other* field on the form ended up with its catalog
+  `default:` value persisted to per-device KV — including fields
+  the operator never touched. Intended behavior is touched-only
+  writes: untouched fields stay at their resolution-chain value
+  (catalog default → app-scope → device override) and don't
+  materialize a per-device override on save.
+
+  Likely cause is in the touched-state serializer's clean-field
+  branch (`backend/src/static/app/forms/touched_state.js` —
+  comment block at lines ~21-22): *"dirty == false → `data-original`
+  value goes through verbatim."* `data-original` for a field whose
+  current value came from the catalog default (`from_default=True`
+  in `value_resolver.ResolvedValue`) is set to that default
+  string, so the serializer emits it, the form-submit writes it,
+  and the device's KV gets a stale-on-arrival per-device override.
+
+  Two-part fix to consider:
+  1. **Renderer side.** Emit a `data-from-default="true"` attribute
+     on inputs whose current value came via step 3 of the
+     resolution chain. Mirrors what the page already knows about
+     the source of `current`.
+  2. **Serializer side.** Skip clean fields with
+     `data-from-default="true"` from the form-submit payload —
+     they shouldn't materialize a per-device override the
+     operator didn't ask for. Dirty `data-from-default` fields
+     still go through (operator explicitly chose to override
+     the default).
+
+  ~30 lines + tests. Worth a careful pass through the FR's
+  P4 spec to make sure we're not undoing an intentional design
+  choice; the spec text and the observed behavior may diverge.
 
 - **Customer app page 404s on `/favicon.ico`.** Browsers
   speculatively request `/favicon.ico` from the page's origin;
