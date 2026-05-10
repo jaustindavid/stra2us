@@ -2,6 +2,53 @@
 
 ## Near-term
 
+- **[HIGH] Automate the `app.js?v=N` cache-bust.** Whenever
+  `backend/src/static/app/app.js` changes, the `<script src=
+  "/app/_static/app.js?v=N">` references in `device.html` and
+  `landing.html` must be bumped to a new `N` — otherwise browsers
+  and Cloudflare's edge cache the old `?v=N` URL and serve stale
+  JS even after a fresh deploy. Operator discipline alone is
+  insufficient: this footgun chewed ~30 minutes of v1.6.5
+  verification when the bug-#1 (peek-while-typing) commit
+  modified `app.js` without bumping the version, and on prior
+  releases the same pattern bit at least twice (filed
+  informally in `csp_admin_audit.md` and `fr_catalog_app_ui_progress.md`'s
+  "Three diagnostic gotchas" section).
+
+  Two fix shapes worth considering:
+
+  1. **Pre-commit hook.** Lints the staged diff: if `app.js`
+     changed but the `?v=N` references in `device.html` /
+     `landing.html` didn't, error out with a clear message
+     ("bump `?v=N` in landing.html + device.html before
+     committing"). Blocks the bad commit at its source.
+     Lightweight, no build-time machinery, no runtime cost.
+     Works with the existing git workflow without changes to
+     `tools/stage`.
+
+  2. **Build-time hash injection.** A small step in the
+     Dockerfile (or `tools/stage deploy`) that hashes
+     `app.js`, replaces the `?v=N` token in the HTML files
+     with `?v=<hash>`. Removes the manual bump entirely;
+     hash changes whenever the file content changes,
+     cache-bust is automatic. More invasive than #1 (touches
+     build pipeline; the hash leaks into the served HTML)
+     but eliminates the operator-discipline failure mode.
+
+  Recommendation: ship **#1** as the first fix — it closes the
+  bite immediately with minimal moving parts. **#2** is the
+  proper long-term answer; defer until #1 has lived through
+  a few releases and we know what edge cases it catches.
+
+  Should ride along with whatever change next touches the
+  static surface. The hook lives at `.git/hooks/pre-commit`
+  (or `.githooks/pre-commit` if we standardize via
+  `core.hooksPath` to share across machines). Detection
+  shape: `git diff --cached --name-only` includes
+  `backend/src/static/app/app.js` AND does NOT include
+  one of `backend/src/static/app/{landing,device}.html`
+  → fail with the bump-required message.
+
 - ~~**Add BuildKit cache mounts to `backend/Dockerfile`.**~~
   Landed 2026-05-09 in v1.6.1. `--mount=type=cache,...` on the
   three remote-fetching `RUN` lines (apt-get for system deps,
@@ -225,6 +272,41 @@
   returning "just now" while the 5s+ branches return "<N><unit>
   ago"; both callers (`Last seen ${...}` and the activity-row
   `<span class="activity-when">`) dropped their hardcoded " ago".
+
+- **Form-submit stuffs catalog defaults into every untouched field.**
+  Observed on the customer device page during v1.6.5 verification:
+  the operator edited one field (wifi_password), clicked Save, and
+  every *other* field on the form ended up with its catalog
+  `default:` value persisted to per-device KV — including fields
+  the operator never touched. Intended behavior is touched-only
+  writes: untouched fields stay at their resolution-chain value
+  (catalog default → app-scope → device override) and don't
+  materialize a per-device override on save.
+
+  Likely cause is in the touched-state serializer's clean-field
+  branch (`backend/src/static/app/forms/touched_state.js` —
+  comment block at lines ~21-22): *"dirty == false → `data-original`
+  value goes through verbatim."* `data-original` for a field whose
+  current value came from the catalog default (`from_default=True`
+  in `value_resolver.ResolvedValue`) is set to that default
+  string, so the serializer emits it, the form-submit writes it,
+  and the device's KV gets a stale-on-arrival per-device override.
+
+  Two-part fix to consider:
+  1. **Renderer side.** Emit a `data-from-default="true"` attribute
+     on inputs whose current value came via step 3 of the
+     resolution chain. Mirrors what the page already knows about
+     the source of `current`.
+  2. **Serializer side.** Skip clean fields with
+     `data-from-default="true"` from the form-submit payload —
+     they shouldn't materialize a per-device override the
+     operator didn't ask for. Dirty `data-from-default` fields
+     still go through (operator explicitly chose to override
+     the default).
+
+  ~30 lines + tests. Worth a careful pass through the FR's
+  P4 spec to make sure we're not undoing an intentional design
+  choice; the spec text and the observed behavior may diverge.
 
 - **Customer app page 404s on `/favicon.ico`.** Browsers
   speculatively request `/favicon.ico` from the page's origin;

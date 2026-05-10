@@ -2,6 +2,7 @@
 # See LICENSE in the repo root.
 import sys
 import os
+import logging
 sys.path.insert(0, os.path.dirname(__file__))
 
 from fastapi import FastAPI
@@ -27,6 +28,17 @@ from fastapi.responses import RedirectResponse
 from core.redis_client import get_redis_client
 from core.admin_auth import verify_password, generate_session_token, verify_session_token, is_rescue_on_default
 from core.perf_log import DEFAULT_THRESHOLD_MS, write_perf_entry
+
+
+# Structured-error logger. Mirrors the `stra2us.oauth` logger added
+# in v1.6.1 for OAuth CSRF instrumentation. Used by the activity-log
+# middleware to emit a context-tagged traceback whenever a request
+# raises through to the middleware boundary — `/kv/` and `/q/` should
+# never 500 (HMAC failure → 401, valid miss → 200 with not_found body),
+# so a 500 here is by definition a bug; making the log line easy to
+# find with structured request context (path + client_id) is what
+# makes "rare intermittent 500" tractable to debug.
+_err_log = logging.getLogger("stra2us.errors")
 
 
 # Configured browser-facing hostname (the Cloudflare-tunneled path).
@@ -152,12 +164,33 @@ async def admin_auth_middleware(request: Request, call_next):
 
 @app.middleware("http")
 async def activity_log_middleware(request: Request, call_next):
+    # Track the exception class across try/except → finally so the
+    # activity-log entry can include it inline (e.g. "Error (500)
+    # [TimeoutError]"). Pre-v1.6.6 the activity log only said
+    # "Error (500)", so an operator hunting an intermittent 500 had
+    # to correlate stdout tracebacks by timestamp. Tagging by class
+    # makes a single XREVRANGE pass enough to see the distribution
+    # of exception types.
+    exc_name = None
     try:
         response = await call_next(request)
         status = response.status_code
     except Exception as e:
         status = 500
-        raise e
+        exc_name = type(e).__name__
+        # Structured-context error log. `logger.exception` automatically
+        # captures the traceback. The format-args carry the request
+        # context FastAPI's default exception handler doesn't provide
+        # (path, method, client_id) — surrounds the bare traceback with
+        # everything needed to localize "which request? which device?".
+        # Contract: /kv/ and /q/ should never 500, so any line here is
+        # a bug to investigate, not noise.
+        _err_log.exception(
+            "Unhandled exception in %s %s (client=%s)",
+            request.method, request.url.path,
+            request.headers.get("X-Client-ID", "unknown"),
+        )
+        raise
     finally:
         path = request.url.path
         # Log device data APIs (queues + KV).
@@ -177,7 +210,12 @@ async def activity_log_middleware(request: Request, call_next):
                 log_status = "Hit (200)" if request.state.kv_hit else "Miss (200)"
             else:
                 client_id = request.headers.get("X-Client-ID", "unknown")
-                log_status = f"Success ({status})" if 200 <= status < 300 else f"Error ({status})"
+                if 200 <= status < 300:
+                    log_status = f"Success ({status})"
+                elif exc_name:
+                    log_status = f"Error ({status}) [{exc_name}]"
+                else:
+                    log_status = f"Error ({status})"
 
             log_entry = {
                 "timestamp": int(time.time()),
