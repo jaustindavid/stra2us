@@ -52,61 +52,21 @@
   ~30 lines + test updates. Touches lint + renderer + a couple
   existing tests that assert specific shapes.
 
-- **Document the `write_only: true` + multi-writer-race discipline.**
-  Surfaced during v1.6.7 staging verification: with a customer
-  page open on a stale render where `wifi_password` was empty,
-  the operator ran `stra2us set <device> wifi_password <value>`
-  from the CLI. The browser still showed the (now-stale) empty
-  field. Editing any *other* field on the browser and saving
-  serialized the stale `wifi_password=""` along with the change,
-  overwriting the freshly-set encrypted value. This is exactly
-  what `write_only: true` (per the v1.6.4 lint) is meant to
-  prevent — the omit-on-untouched branch in the touched-state
-  serializer would have skipped the empty field entirely.
-
-  The v1.6.4 lint already catches the missing-`write_only` case,
-  but the warning text only frames it as "stored value clobbered
-  by empty submit" without naming the multi-writer scenario
-  that makes it acute. Catalog authors reading the lint may not
-  realize how easily the race surfaces in practice (operator
-  flipping between CLI and browser, or — once devices write to
-  the same fields — device + operator concurrently).
-
-  Two doc-level fixes:
-
-  1. **Expand the v1.6.4 lint warning** in
-     `tools/stra2us_cli/catalog_lint.py:_lint_field_secret_pairing`
-     to name the multi-writer case explicitly. Current text:
-     *"masked field renders empty by default and an untouched
-     submit will write the empty value over the stored one."*
-     Add: *"...or one made on a stale render after the value
-     was set elsewhere (e.g. via `stra2us set` or a device
-     write)."* Two-line tweak; highest leverage because every
-     future catalog hits the lint at publish.
-
-  2. **Document the triplet pattern in `docs/catalog_spec.md`**
-     (or wherever the canonical catalog grammar reference
-     lives). A short section explaining that
-     `widget: secret` + `write_only: true` + `encrypted: true`
-     are three composable primitives that almost always belong
-     together for any device-readable secret, with a one-
-     paragraph rationale for each. Mirror the explanation that
-     lives in the v1.6.4 secret-pairing lint's docstring, but
-     in the spec rather than the lint code.
-
-  Plus a smaller third nicety: expand the comment block on
-  `wifi_password` in `tools/examples/critterchron_v2.s2s.yaml`
-  to name the multi-writer race, since that file is what
-  catalog authors copy-paste from when starting a new field.
-
-  Explicitly out of scope: **concurrent-write detection /
-  ETag-style versioning.** Surfaced during v1.6.7 verification
-  as a possible mitigation; rejected as too heavyweight for
-  the surface size. The race is real but rare in practice
-  (it only matters when two writers are actually concurrent),
-  and the `write_only` discipline closes the common cases.
-  Documenting "yes, that race exists; here's how to avoid it"
-  is the right level of response for this codebase's scale.
+- ~~**Document the `write_only: true` + multi-writer-race discipline.**~~
+  Closed 2026-05-10 alongside v1.6.8. The acute version of the
+  race (load-page + Save-without-touching = wipe-stored-value)
+  was the data-loss bug v1.6.8 fixed architecturally — the
+  customer-page render now populates the plaintext into
+  `data-original` so the clean-submit branch round-trips the
+  value rather than clobbering it. The v1.6.4 lint warnings
+  were rewritten in v1.6.8 to reflect the new framing (the
+  third warning's rationale shifted from "data-loss footgun"
+  to "plaintext-in-HTML exposure"), which subsumes most of
+  what this TODO was going to document. A narrower race
+  remains (browser holds a stale render from before a CLI
+  set, then submits) but it's now a recoverable inconvenience
+  rather than silent data loss, and pursuing it would push
+  toward the ETag/versioning territory we explicitly rejected.
 
 - **Surface the running release version in the admin UI.**
   Today's "what's actually deployed?" answer requires SSHing
@@ -392,6 +352,58 @@
   Defer until a real on-device pain point surfaces or a future
   release has bandwidth for a focused half-day.
 
+- **Gate `/app/` landing form behind OAuth (close lookup_device
+  enumeration).** Today `/api/app/lookup_device` is intentionally
+  public — the customer-page landing form needs a name → app
+  lookup *before* OAuth can gate the per-device page. An
+  unauthenticated attacker can probe the endpoint and learn
+  (a) whether a given device name exists, (b) which app it
+  belongs to. The endpoint's docstring (`routes_app.py:213`)
+  flags this and suggests Cloudflare Turnstile / CAPTCHA at the
+  edge as the mitigation; OAuth at the application layer
+  achieves the same outcome with no third-party dependency.
+
+  Shape (per the v1.6.8 design discussion):
+
+  1. **Add `/app/` to the auth-required paths** in `main.py`'s
+     auth middleware. Currently the landing page itself is
+     public; under this change, an unauthed visitor gets
+     redirected to `/oauth/google/login?next=/app/` before
+     seeing the form. Subsequent visits within the OAuth
+     session cookie lifetime are silent — one roundtrip per
+     session, not per visit.
+  2. **`/api/app/lookup_device` becomes implicitly auth-gated**
+     by sharing the same `/app/` prefix path. Update its
+     docstring to reflect the new model (drop the "Public — no
+     auth required" framing + the Turnstile reference).
+  3. **Per-device page** (`/app/<app>/<device>`) already does
+     OAuth + ACL check; unchanged.
+
+  Threat-model delta: enumeration goes from "anyone with
+  internet" → "anyone with an OAuth-allowlisted Google account."
+  Allowlisted accounts are people the operator already trusts
+  enough to grant some ACL; even those are subject to Google's
+  rate-limiting and account-reputation systems. Automated
+  scraping by un-allowlisted bots becomes effectively impossible.
+
+  UX cost: an unauthed visitor sees one OAuth login roundtrip
+  before the landing form. No reduction in capability for
+  legitimate users; first-time visitors see the same Google
+  login they'd see on the per-device page anyway.
+
+  Implementation scope: ~20 lines (middleware path-pattern
+  addition + docstring updates) + a couple test adjustments
+  (verify a no-cookie request to `/app/` and to
+  `/api/app/lookup_device` 302s to OAuth instead of returning
+  a result). Pairs naturally with the Basic Auth brute-force
+  lockout TODO below — both are auth-surface tightening, can
+  ship together or separately.
+
+  Considered and rejected: option B (keep `/app/` public,
+  detect 401 from lookup_device in JS, redirect from there).
+  More JS code, preserves the "see the form without auth"
+  UX that nobody asked for. Option A (this TODO) is cleaner.
+
 - **Implement Basic Auth brute-force detection & lockout.** FR is
   in [`docs/fr_basic_auth_lockout.md`](docs/fr_basic_auth_lockout.md).
   Sliding-window failure counter keyed by `(source_ip, username)`,
@@ -449,7 +461,16 @@
   ago"; both callers (`Last seen ${...}` and the activity-row
   `<span class="activity-when">`) dropped their hardcoded " ago".
 
-- **Form-submit stuffs catalog defaults into every untouched field.**
+- ~~**Form-submit stuffs catalog defaults into every untouched field.**~~
+  Landed 2026-05-10 in v1.6.7. `ResolvedValue.from_default` plumbed
+  through the renderer as `data-from-default="true"` on the input;
+  touched-state serializer skips clean+from-default fields, so the
+  resolution chain (per-device → app-scope → catalog default) keeps
+  producing the same value on the next page load rather than
+  materializing per-device overrides for every untouched field.
+
+  *Original entry preserved below for history.*
+
   Observed on the customer device page during v1.6.5 verification:
   the operator edited one field (wifi_password), clicked Save, and
   every *other* field on the form ended up with its catalog
@@ -484,7 +505,20 @@
   P4 spec to make sure we're not undoing an intentional design
   choice; the spec text and the observed behavior may diverge.
 
-- **Customer app page 404s on `/favicon.ico`.** Browsers
+- ~~**Customer app page 404s on `/favicon.ico`.**~~
+  Landed 2026-05-10 in v1.6.7. New default favicon at
+  `backend/src/static/app/favicon.png` (256×256 PNG downsized
+  from the admin's 2048×2048 source). `<link rel="icon">` emitted
+  in both `landing.html` and `device.html`. Per-app override via
+  `theme.favicon_asset` in the catalog Theme model — validated by
+  `catalog_lint` and substituted into the device page via a new
+  `{{FAVICON_HREF}}` template placeholder. Lint also counts
+  `favicon_asset` as referenced so the unused-asset warning
+  doesn't false-positive on per-app favicons.
+
+  *Original entry preserved below for history.*
+
+  Browsers
   speculatively request `/favicon.ico` from the page's origin;
   the customer app serves none, so the console shows a 404
   (cosmetic but noisy, and operators reading the console for
@@ -507,7 +541,18 @@
   Small scope (~30 lines), pairs naturally with the existing
   `theme.logo_asset` work in the catalog FR.
 
-- **`lookup_device` doesn't find provisioned-but-unwritten devices.**
+- ~~**`lookup_device` doesn't find provisioned-but-unwritten devices.**~~
+  Landed 2026-05-10 in v1.6.7. New `device_to_app:<client_id>`
+  reverse index, written at provision time by `provision_device`
+  and cleared at revoke time. `lookup_device` consults it first
+  (O(1) GET) and falls back to the SCAN for legacy devices,
+  backfilling the index entry on SCAN hit so the legacy population
+  self-heals. Closes both the workflow gap (provision → configure
+  → flash now works) and the docstring's pre-v1.6.7 perf note
+  about scan-on-demand being O(N).
+
+  *Original entry preserved below for history.*
+
   `provision_device` (`backend/src/api/routes_admin.py:193`) creates
   the device's HMAC secret + ACL but writes zero KV records.
   `lookup_device` (`backend/src/api/routes_app.py:208`) establishes
@@ -525,8 +570,20 @@
   for legacy devices provisioned before the fix. Both bugs (this
   one + the perf concern) close in one change. ~30 lines + tests.
 
-- **`stra2us set` should honor the catalog's `encrypted:` field,
-  not the `--encrypted` CLI flag.** Today the CLI's catalog-aware
+- ~~**`stra2us set` should honor the catalog's `encrypted:` field, not the `--encrypted` CLI flag.**~~
+  Landed 2026-05-10 in v1.6.7. `cmd_set` now reads `var.encrypted`
+  from the loaded catalog and ignores the `--encrypted` flag.
+  Mismatches surface as stderr diagnostics (warning when operator
+  passed the flag against a catalog that says no; info when omitted
+  on a catalog that says yes). The raw-KV `stra2us put` path is
+  unchanged — no catalog consulted, `--encrypted` operator-controlled.
+  `Var.encrypted` field comment updated to reflect that Stra2us now
+  acts on it; help text on `set --encrypted` marks the flag as
+  deprecated for catalog keys.
+
+  *Original entry preserved below for history.*
+
+  Today the CLI's catalog-aware
   write path (`cmd_set` in `tools/stra2us_cli/cli.py:581`) passes
   `encrypted=args.encrypted` straight through to the wire — the
   operator picks whether to encrypt at write time, and the
