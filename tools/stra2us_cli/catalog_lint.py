@@ -241,56 +241,86 @@ def _lint_field_secret_pairing(var: Var, name: str, issues: list[LintIssue]) -> 
     """Warn on incomplete `widget: secret` / `encrypted` / `write_only` triplets.
 
     These three are independently-toggleable primitives — by design, so
-    edge cases (display-mask-only license keys, etc.) stay expressible —
-    but for the overwhelmingly common case of "this field stores a
-    password / API key / token" the operator wants all three:
+    edge cases (display-mask-only license keys, "set but never read"
+    API tokens, etc.) stay expressible — but each has a distinct role
+    and certain partial combinations are surprising enough to flag:
 
-    * `widget: secret` masks the input (`<input type="password">`)
-    * `write_only: true` makes the form omit the field on untouched
-      submit, so the masked-empty render doesn't clobber the stored
-      value
-    * `encrypted: true` stores the value encrypted at rest (msgpack
-      ext type 0x21, `docs/fr_encrypted_values.md`)
+    * `widget: secret` controls **how the customer-page input renders**
+      — `<input type="password">` (browser masks visually with dots,
+      Show/Hide button toggles plaintext on the input element).
+      v1.6.8+ populates the plaintext in `value=` and `data-original=`;
+      the masking is visual-only (plaintext is in the HTML source).
+    * `encrypted: true` controls **how the value is stored on the
+      server** — `:enc=1` sidecar in Redis; device-side reads return
+      the value as msgpack ext type 0x21 (encrypted on the wire to
+      devices). `docs/fr_encrypted_values.md`.
+    * `write_only: true` controls **what the customer can read back**
+      — the field renders empty regardless of stored value, so the
+      operator can SET but never SEE the existing value. Equivalent
+      to a banking app's "change password" field. Pairs with the
+      touched-state serializer's omit-clean-write_only branch.
 
-    Each pairing warning is independent and silenceable by completing
-    the triplet — there's no error here, just nudges. An operator who
-    genuinely wants the partial combination can ignore the warning.
+    Each pairing warning is independent and silenceable by adjusting
+    the field. There's no error here, just nudges.
 
-    Filed against the v1.6.x cycle after a deployed catalog had
-    `encrypted: true` but no `widget: secret`, so the customer page
-    rendered the Wi-Fi password as a plain text input that showed the
-    stored value on every reload. The lint warning would have caught
-    that at publish time."""
+    Warnings re-aligned in v1.6.8 after the customer-page Reveal flow
+    was replaced with populated-value + Show button. The pre-v1.6.8
+    rationale (data-loss on untouched submit) is no longer load-bearing
+    — the bug it warned about has been fixed structurally. The new
+    rationale is about exposure-by-default and "set but never read"
+    semantics."""
     base = f"vars.{name}"
 
-    # encrypted-at-rest but not display-masked: surprising for a value
-    # that's deliberately marked sensitive enough to encrypt.
+    # encrypted-at-rest but not display-masked: the operator marked
+    # this field sensitive enough to encrypt server-side, but the
+    # customer page would render it as a plain text input (no
+    # type=password masking). Visual UX cost is small; consider
+    # adding `widget: secret` for the typical "this is a password"
+    # presentation.
     if var.encrypted and var.widget != "secret":
         issues.append(LintIssue(
             "warning", f"{base}.encrypted",
-            "`encrypted: true` without `widget: secret` — value is encrypted "
-            "at rest but renders as a plain text input on the customer page; "
-            "consider adding `widget: secret`",
+            "`encrypted: true` without `widget: secret` — value is "
+            "encrypted at rest (and on the wire to devices) but renders "
+            "as a plain text input on the customer page (no visual "
+            "masking); consider adding `widget: secret`",
         ))
 
     if var.widget == "secret":
         # masked input but plaintext storage: surprising for a password.
+        # `widget: secret` is purely a customer-page UX hint; without
+        # `encrypted: true` the value sits plaintext in Redis AND is
+        # served to devices in the clear.
         if not var.encrypted:
             issues.append(LintIssue(
                 "warning", f"{base}.widget",
-                "`widget: secret` without `encrypted: true` — input is masked "
-                "but value is stored in plaintext; consider adding "
-                "`encrypted: true`",
+                "`widget: secret` without `encrypted: true` — input is "
+                "visually masked on the customer page but the value is "
+                "stored in plaintext in Redis and served plaintext to "
+                "devices; consider adding `encrypted: true`",
             ))
-        # masked input but no preserve-on-empty: an untouched submit will
-        # send empty-string and clobber the stored value.
+        # masked input + not write_only: the plaintext is populated in
+        # the rendered HTML (`value="..."`) so the operator can see
+        # what's stored via the Show button. That's fine for typical
+        # passwords (Wi-Fi, etc. where the operator legitimately needs
+        # to re-read what they set) but consider `write_only: true`
+        # for higher-sensitivity values (API tokens, OAuth secrets)
+        # where you want the customer to SET but never READ — the
+        # field renders empty regardless of stored value, no plaintext
+        # ever in the HTML.
         if not var.write_only:
             issues.append(LintIssue(
                 "warning", f"{base}.widget",
-                "`widget: secret` without `write_only: true` — masked field "
-                "renders empty by default and an untouched submit will write "
-                "the empty value over the stored one; consider adding "
-                "`write_only: true`",
+                "`widget: secret` without `write_only: true` — the "
+                "stored value is populated as plaintext in the rendered "
+                "HTML (`value=...`, `data-original=...`), so a malicious "
+                "browser extension / DevTools session can read it. "
+                "Acceptable for low-value secrets (Wi-Fi passwords, "
+                "etc.) where the operator should be able to re-read "
+                "what they set. For higher-value secrets (API tokens, "
+                "OAuth refresh tokens) where the customer should only "
+                "SET, not READ, consider `write_only: true` — the "
+                "field renders empty regardless of stored value",
             ))
 
 
