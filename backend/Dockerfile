@@ -86,6 +86,26 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # Create necessary directories for volumes and logs
 RUN mkdir -p /data /var/log/supervisor /var/run/
 
+# Generate the admin session signing secret at image build time.
+# This is the HMAC key for admin session cookies (see
+# backend/src/core/admin_auth.py). Baking it here gives us a
+# stable secret shared by every uvicorn worker in the container
+# without an operator step. Rotation is per image rebuild (=
+# per deploy), which is the intent: deploys force admin
+# re-login, OAuth makes that cheap.
+#
+# Located outside /app so the prod bind-mount of ./backend:/app
+# doesn't shadow it. `chmod 600` keeps it root-only inside the
+# container; the threat model is "anyone with Synology root
+# already wins anyway," so this is mostly tidiness.
+#
+# `set -o pipefail` not needed (no pipe), and the python -c is a
+# single statement that either succeeds or fails the build.
+RUN mkdir -p /etc/stra2us && \
+    python3 -c 'import os; print(os.urandom(32).hex())' \
+        > /etc/stra2us/admin_session_secret && \
+    chmod 600 /etc/stra2us/admin_session_secret
+
 # Copy the backend application into /app.
 # (Overridden at runtime when the user mounts ./backend:/app)
 COPY backend/ .

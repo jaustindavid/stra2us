@@ -48,11 +48,55 @@ def is_rescue_on_default() -> bool:
     default = _find_user_line(DEFAULT_HTPASSWD_FILE, "rescue")
     return live is not None and default is not None and live == default
 
-# In a production environment with multiple horizontally scaled workers, 
-# ADMIN_SESSION_SECRET should be statically set as an environment variable 
-# so all workers validate the same cookie. Otherwise, it generates a random 
-# one per boot, which is fine for single-instance or session-bound routing.
-SESSION_SECRET = os.environ.get("ADMIN_SESSION_SECRET", os.urandom(32).hex())
+# HMAC signing key for admin session cookies. Resolution order:
+#
+#   1. ADMIN_SESSION_SECRET env var (operator override — useful
+#      for local dev, tests, or if you ever need to force a
+#      specific value).
+#   2. /etc/stra2us/admin_session_secret — generated at image
+#      build time by the Dockerfile, baked into the image. This
+#      is the normal prod/staging path. All uvicorn workers in
+#      the container read the same file → all agree on what
+#      they've collectively signed. Rotates per image rebuild
+#      (= per deploy), which forces admin re-login. OAuth makes
+#      that cheap.
+#   3. Per-process random fallback — only for local dev /
+#      tests where neither (1) nor (2) is set. Safe under
+#      single-worker; would break under multi-worker, but
+#      multi-worker without the baked file or env var is an
+#      operator error and we emit a warning to make it visible.
+#
+# Why not just env var: operator step is easy to forget; silent
+# 75%-broken admin login under multi-worker is exactly the
+# footgun we're trying to engineer away.
+SESSION_SECRET_FILE = "/etc/stra2us/admin_session_secret"
+
+def _load_session_secret() -> str:
+    env_value = os.environ.get("ADMIN_SESSION_SECRET")
+    if env_value:
+        return env_value
+    try:
+        with open(SESSION_SECRET_FILE) as f:
+            value = f.read().strip()
+            if value:
+                return value
+    except OSError:
+        pass
+    # Fallback. Loud — if a multi-worker container ever hits
+    # this, login will appear ~75% broken and the operator needs
+    # the breadcrumb.
+    import sys
+    print(
+        f"[admin_auth] WARNING: ADMIN_SESSION_SECRET env var unset "
+        f"and {SESSION_SECRET_FILE} unreadable; using per-process "
+        f"random secret. OK for single-worker dev; admin login "
+        f"WILL break under multi-worker.",
+        file=sys.stderr,
+        flush=True,
+    )
+    return os.urandom(32).hex()
+
+SESSION_SECRET = _load_session_secret()
 
 def verify_password(username, password):
     if not os.path.exists(HTPASSWD_FILE):
