@@ -356,17 +356,23 @@ def test_data_from_default_omitted_for_stored_value():
     assert "data-from-default" not in nearby
 
 
-def test_data_from_default_not_on_encrypted_reveal_path():
-    """The encrypted-non-write_only Reveal branch renders an empty
-    input bound to an external fetch — no concept of "default"
-    applies. The renderer should NOT emit `data-from-default` on
-    that code path. Uses a one-field custom catalog because the
-    main fixture's `wifi_password` is `write_only: true`, which
-    routes through a different (widget-renderer) branch."""
+def test_encrypted_non_write_only_renders_password_with_show_button():
+    """v1.6.8 commit 2: encrypted-non-write_only widget:secret
+    fields render as `type="password"` (visual masking via the
+    browser's password-field dots) with the plaintext populated
+    in both `value=` and `data-original=`. A Show/Hide button
+    sits next to the input; clicking flips `input.type` between
+    password and text — purely client-side, no server fetch.
+
+    Pre-v1.6.8 the renderer emitted an empty input + Reveal
+    button that fetched the plaintext on click; that design's
+    data-original="" caused clean-Save to wipe the stored value.
+    Commit 1 stripped the encrypted-Reveal complexity; commit 2
+    re-introduces the visual masking as a thin overlay without
+    touching the data-flow primitive."""
     custom_catalog = {
         "app": "demo",
         "vars": {
-            # Encrypted, not write_only — hits the Reveal-button path.
             "api_token": {
                 "type": "string", "scope": ["app", "device"],
                 "label": "API token",
@@ -378,15 +384,58 @@ def test_data_from_default_not_on_encrypted_reveal_path():
                       catalog=custom_catalog,
                       values={"api_token": ResolvedValue("plaintext-token",
                                                         encrypted=True)})
-    needle = 'id="field-api_token"'
-    idx = html.find(needle)
-    assert idx >= 0
-    nearby = html[idx:idx + 200]
-    assert 'data-encrypted="true"' in nearby, (
-        "encrypted-non-write_only field should hit the Reveal branch "
-        "(data-encrypted=true on the input)"
-    )
-    assert "data-from-default" not in nearby
+    # Find the full setting-card for api_token — from its opening
+    # div through the closing one. This is the slice every per-card
+    # assertion below interrogates.
+    card_open = html.find('data-var="api_token"')
+    assert card_open >= 0
+    card_close = html.find('</div>', card_open)
+    assert card_close >= 0
+    card = html[card_open:card_close + len('</div>')]
+    # Visual masking on (type=password) but value populated.
+    assert 'type="password"' in card
+    assert 'value="plaintext-token"' in card
+    # data-original carries the plaintext — clean Save round-trips.
+    assert 'data-original="plaintext-token"' in card
+    # Show button present.
+    assert 'class="reveal-btn"' in card
+    assert '>Show</button>' in card
+    # No pre-v1.6.8 data-encrypted attribute on the input.
+    assert "data-encrypted" not in card
+    # data-from-default also shouldn't be there.
+    assert "data-from-default" not in card
+
+
+def test_widget_secret_write_only_skips_show_button():
+    """write_only fields render empty and have no value to peek
+    at, so the Show button is skipped — keeps the customer from
+    clicking a no-op affordance."""
+    custom_catalog = {
+        "app": "demo",
+        "vars": {
+            "wifi_password": {
+                "type": "string", "scope": ["app", "device"],
+                "label": "Wi-Fi password",
+                "widget": "secret", "write_only": True, "encrypted": True,
+            },
+        },
+    }
+    html = render_page(app="demo", device="dev1",
+                      catalog=custom_catalog,
+                      values={"wifi_password": ResolvedValue("stored-secret",
+                                                            encrypted=True)})
+    # Locate the full setting-card slice from its opening data-var
+    # to the closing </div>.
+    card_open = html.find('data-var="wifi_password"')
+    assert card_open >= 0
+    card_close = html.find('</div>', card_open)
+    assert card_close >= 0
+    card = html[card_open:card_close + len('</div>')]
+    assert 'type="password"' in card
+    assert 'value=""' in card  # write_only renders empty
+    # No Show button — write_only renders empty, so there's nothing
+    # to peek at; skip the affordance.
+    assert "reveal-btn" not in card
 
 
 # ----- publish hash stability -----

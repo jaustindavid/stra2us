@@ -319,16 +319,42 @@ def _render_textarea(name: str, var: dict, current: Any) -> str:
 
 
 def _render_secret(name: str, var: dict, current: Any) -> str:
-    """`<input type="password">`. When `write_only=true` the field
-    ships empty regardless of stored value (FR explicit). When
-    `write_only=false` the current (plaintext) value goes into
-    the field."""
+    """`widget: secret` field. v1.6.8 commit 2 (masking overlay):
+    renders as `<input type="password">` with the plaintext value
+    populated directly. The browser masks visually (dots) while
+    keeping the value in the DOM; a Show/Hide button next to the
+    field flips `input.type` between `password` and `text` for
+    peek-on-demand. The toggle is purely client-side — no server
+    fetch.
+
+    Commit 1 stripped the encrypted-Reveal complexity (separate
+    branch in page_renderer that emitted an empty input + server-
+    fetch button); commit 2 layers visual masking back on top of
+    the simpler data-flow without re-introducing the pre-commit-1
+    data-loss footgun. The data-original attribute carries the
+    plaintext (same as any other field's clean-branch shape), so
+    the touched-state serializer's clean-field path preserves the
+    stored value on untouched Save.
+
+    `write_only=true` semantics preserved: the field renders empty
+    regardless of stored value, so the customer can SET but never
+    READ. The Show button still renders (UX consistency for any
+    widget:secret field) but flipping it on an empty input shows
+    an empty input — harmless and consistent."""
     write_only = bool(var.get("write_only"))
     display_value = "" if write_only else (current if current is not None else "")
     common = _common_attrs(name, current, var)
     parts = [
         f'<input type="password" {common}',
         f'value="{_esc(display_value)}"',
+        # `autocomplete=new-password` is the modern hint for "this
+        # is a password being set, not one to autofill." Better
+        # than `off` (which most browsers ignore for password
+        # fields) but still imperfect — some password managers
+        # autofill anyway. The serializer's dirty-branch will
+        # send whatever autofill stuffed in, so this isn't a
+        # data-correctness issue any more (commit 1 closed that);
+        # it's purely UX.
         f'autocomplete="new-password"',
     ]
     max_len = var.get("max_length")

@@ -132,11 +132,13 @@ def test_submit_handler_reloads_on_success():
 
 # ----- non-regression: existing behavior preserved -----
 
-def test_reveal_button_handler_still_present():
-    """P3's Reveal flow stays — encrypted non-write_only fields
-    keep the existing decrypt-on-click path."""
-    src = _read(_APP_JS)
-    assert "reveal-btn" in src or "bindRevealButtons" in src
+# v1.6.8 commit 1: removed the encrypted-Reveal flow + its test
+# (previously `test_reveal_button_handler_still_present`). The
+# renderer no longer emits a Reveal button for encrypted fields;
+# encrypted-non-write_only fields render with their plaintext
+# value directly in `value=`. Commit 2 will re-introduce a thin
+# Show/Hide button as a UX overlay; a new test for that lives
+# alongside commit 2's code.
 
 
 def test_telemetry_refresh_still_present():

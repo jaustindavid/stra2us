@@ -105,13 +105,39 @@ def test_string_multiline_renders_textarea():
     assert ">hello</textarea>" in html
 
 
-def test_string_secret_renders_password_input():
+def test_string_secret_renders_password_input_with_value():
+    """v1.6.8 commit 2: widget:secret renders as `type="password"`
+    (browser masks visually with dots) with the plaintext value
+    populated directly in both `value=` and `data-original=`.
+    Visual masking is a UX overlay — the Show/Hide button toggles
+    `input.type` between password and text on click, purely
+    client-side. Pre-v1.6.8 the field rendered with value="" and
+    the plaintext was fetched on click; that design had the
+    data-loss footgun commit 1 fixed by populating value directly."""
     html = render_widget("api_key", {
         "type": "string", "scope": ["app"], "widget": "secret",
     }, "sk-XXX")
     assert 'type="password"' in html
     assert 'value="sk-XXX"' in html
+    # data-original carries the same value — the clean-field
+    # serialize branch sends it back unchanged on submit, which
+    # is what closes the pre-v1.6.8 "clean Save wipes the value"
+    # footgun.
+    assert 'data-original="sk-XXX"' in html
     assert 'autocomplete="new-password"' in html
+
+
+def test_string_secret_write_only_still_renders_empty():
+    """write_only semantics preserved through commit 1: the
+    field renders empty regardless of stored value, so the
+    customer can SET but never READ. Pairs with the touched-
+    state serializer's omit-clean-write_only branch."""
+    html = render_widget("api_key", {
+        "type": "string", "scope": ["app"], "widget": "secret",
+        "write_only": True,
+    }, "sk-XXX")
+    assert 'value=""' in html
+    assert 'data-write-only="true"' in html
 
 
 def test_string_with_pattern_renders_text_with_pattern_attr():

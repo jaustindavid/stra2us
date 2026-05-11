@@ -46,7 +46,7 @@ import {
     init as initTouchedState,
     serialize as serializeForm,
     attachSubmitHandler,
-} from './forms/touched_state.js?v=12';
+} from './forms/touched_state.js?v=15';
 
 const ADMIN_API = '/api/admin';
 const APP_API   = '/api/app';
@@ -182,10 +182,10 @@ function initDevice() {
         attachSubmitHandler(form, onFormSubmit);
     }
 
-    // Bind the Reveal-button flow once at page load. The buttons
-    // themselves are rendered server-side by page_renderer for
-    // encrypted non-write_only fields.
-    bindRevealButtons();
+    // v1.6.8 commit 2: bind the Show/Hide button next to
+    // `widget: secret` fields. Purely client-side — flips
+    // `input.type` between password and text. No server fetch.
+    bindShowHideButtons();
 
     // Telemetry tail: first fetch fires immediately, then every 30s,
     // and on tab regain-focus so a customer who left the tab open
@@ -267,92 +267,37 @@ async function onFormSubmit(payload, event) {
 }
 
 // =====================================================================
-// REVEAL FLOW
+// SHOW / HIDE TOGGLE (v1.6.8 commit 2)
 //
 // page_renderer emits `<button class="reveal-btn" data-var="<name>">`
-// next to the masked password input for encrypted, non-write_only
-// fields. Click → fetch decrypted value via the existing admin
-// peek/kv path → fill the input → flip the button to "Hide".
+// next to every `widget: secret` field that isn't `write_only`.
+// Click flips `input.type` between "password" (masked, dots) and
+// "text" (plaintext visible). Purely client-side — no server
+// fetch, no data-flow involvement. The plaintext is already in
+// the input's `value` (populated server-side); this just toggles
+// the visual mask.
+//
+// The `.reveal-btn` class name is preserved from the pre-commit-1
+// encrypted-Reveal flow for CSS-style continuity. The semantics
+// are different (no fetch) but the button looks the same.
 // =====================================================================
 
-function bindRevealButtons() {
+function bindShowHideButtons() {
     document.body.addEventListener('click', (ev) => {
         const btn = ev.target.closest('.reveal-btn');
         if (!btn) return;
         const varName = btn.dataset.var;
         if (!varName) return;
-        toggleReveal(varName, btn);
+        const input = document.getElementById(`field-${varName}`);
+        if (!input) return;
+        if (input.type === 'password') {
+            input.type = 'text';
+            btn.innerText = 'Hide';
+        } else {
+            input.type = 'password';
+            btn.innerText = 'Show';
+        }
     });
-}
-
-async function toggleReveal(varName, btn) {
-    const input = document.getElementById(`field-${varName}`);
-    if (!input) return;
-
-    // Hide branch (currently revealed): flip back to type=password,
-    // restore the placeholder dots if the input is empty. Whether
-    // we got here via a server-fetch reveal or a peek-while-typing
-    // unmask, the symmetric flip is the same.
-    if (btn.innerText === 'Hide') {
-        input.type = 'password';
-        if (input.value === '') {
-            input.placeholder = '••••••••';
-        }
-        btn.innerText = 'Reveal';
-        return;
-    }
-
-    // Reveal branch. Two modes:
-    //   1. Server-fetch: the input was rendered for an existing
-    //      encrypted-non-write_only stored value (data-encrypted=true)
-    //      AND the input is currently empty (placeholder render).
-    //      Fetch the plaintext via the admin peek path, populate,
-    //      then flip to type=text.
-    //   2. Local toggle: the input has user-typed content (or is
-    //      a fresh widget:secret field with no stored encrypted
-    //      value). No fetch needed; just flip type=password →
-    //      type=text so the typed value becomes visible.
-    // Mode (2) is what bug #1 of v1.6.5 added: pre-v1.6.5 the user
-    // typing into a fresh widget:secret field had no way to peek
-    // at what they typed.
-    const isStoredEncrypted = input.dataset.encrypted === 'true';
-    const isEmpty = input.value === '';
-
-    if (isStoredEncrypted && isEmpty) {
-        // Mode 1: fetch from server.
-        btn.disabled = true;
-        btn.innerText = '…';
-        try {
-            const path = `${encodeURIComponent(_state.appName)}/${encodeURIComponent(_state.deviceId)}/${encodeURIComponent(varName)}`;
-            const r = await fetch(`${ADMIN_API}/peek/kv/${path}`);
-            if (!r.ok) {
-                btn.innerText = 'Reveal';
-                return;
-            }
-            const data = await r.json();
-            if (data.status === 'ok' && data.message !== null && data.message !== undefined) {
-                input.value = (typeof data.message === 'string')
-                    ? data.message
-                    : String(data.message);
-                input.placeholder = '';
-                input.type = 'text';
-                btn.innerText = 'Hide';
-            } else {
-                btn.innerText = 'Reveal';
-            }
-        } catch (e) {
-            btn.innerText = 'Reveal';
-        } finally {
-            btn.disabled = false;
-        }
-        return;
-    }
-
-    // Mode 2: local toggle (no fetch). The user is peeking at
-    // their own typed input, or unmasking a default that's
-    // already in the form. Either way, just flip the type.
-    input.type = 'text';
-    btn.innerText = 'Hide';
 }
 
 // =====================================================================

@@ -182,56 +182,55 @@ def _render_setting_card(name: str, var: dict, current: str | None,
     if off_spec:
         parts.append(_render_off_spec_badge(current))
 
-    if encrypted and not var.get("write_only"):
-        # Encrypted secrets that aren't write_only: render with
-        # a Reveal placeholder. P4's reveal flow stays in app.js;
-        # for P3 we emit the placeholder + a button the existing
-        # app.js can wire to.
-        parts.append(
-            f'<input type="password" name="{_esc(name)}" '
-            f'id="field-{_esc(name)}" '
-            f'data-original="" data-encrypted="true" '
-            f'value="" autocomplete="new-password" placeholder="••••••••">'
-        )
-        parts.append(
-            f'<button type="button" class="reveal-btn" '
-            f'data-var="{_esc(name)}">Reveal</button>'
-        )
-    else:
-        widget = render_widget(name, var, current)
-        # Inject id="field-<name>" so the <label for=...> lines up.
-        # The widget renderer emits `name="..."` first; we splice
-        # the id after it. Cheap string surgery; cleaner than
-        # threading an `id` parameter through every renderer.
-        widget_with_id = widget.replace(
-            f'name="{_esc(name)}"',
-            f'name="{_esc(name)}" id="field-{_esc(name)}"',
+    # v1.6.8 (commit 1): encrypted fields now render through the
+    # same widget_renderer path as everything else. Pre-v1.6.8 we
+    # had a separate encrypted-Reveal branch that emitted an empty
+    # input + a Reveal button (the plaintext was deliberately kept
+    # out of the HTML — fetched on click via /peek/kv/). That
+    # design's data-original="" meant the touched-state serializer's
+    # clean branch always sent empty, clobbering the stored value
+    # on any untouched Save. The v1.6.7/v1.6.8 patches tried to
+    # paper over it; commit 1 strips the encrypted-Reveal branch
+    # entirely and lets data-original carry the plaintext like
+    # any other field. Visual masking (the `<input type="password">`
+    # dots) and a Show/Hide button get re-added as a thin overlay
+    # in commit 2 — that's a UX layer, not a data-flow concern.
+    widget = render_widget(name, var, current)
+    # Inject id="field-<name>" so the <label for=...> lines up.
+    # The widget renderer emits `name="..."` first; we splice
+    # the id after it. Cheap string surgery; cleaner than
+    # threading an `id` parameter through every renderer.
+    widget_with_id = widget.replace(
+        f'name="{_esc(name)}"',
+        f'name="{_esc(name)}" id="field-{_esc(name)}"',
+        1,
+    )
+    # v1.6.7 (TODO #6): tag fields whose current value came from
+    # the catalog default. The touched-state serializer skips
+    # clean+from-default fields so saving one edit doesn't
+    # silently materialize per-device overrides for every other
+    # field's catalog default.
+    if from_default:
+        widget_with_id = widget_with_id.replace(
+            f'id="field-{_esc(name)}"',
+            f'id="field-{_esc(name)}" data-from-default="true"',
             1,
         )
-        # v1.6.7 (TODO #6): tag fields whose current value came from
-        # the catalog default. The touched-state serializer skips
-        # clean+from-default fields so saving one edit doesn't
-        # silently materialize per-device overrides for every other
-        # field's catalog default.
-        if from_default:
-            widget_with_id = widget_with_id.replace(
-                f'id="field-{_esc(name)}"',
-                f'id="field-{_esc(name)}" data-from-default="true"',
-                1,
-            )
-        parts.append(widget_with_id)
-        # v1.6.5: also emit a Reveal/Hide toggle next to any
-        # `widget: secret` field, even when there's no encrypted
-        # value to fetch. Pre-v1.6.5 the customer typed blind into
-        # a `<input type="password">` with no peek option until
-        # they saved; now they can confirm what they typed.
-        # Skipped for `write_only` fields — those deliberately
-        # render without any read-back affordance.
-        if var.get("widget") == "secret" and not var.get("write_only"):
-            parts.append(
-                f'<button type="button" class="reveal-btn" '
-                f'data-var="{_esc(name)}">Reveal</button>'
-            )
+    parts.append(widget_with_id)
+
+    # v1.6.8 commit 2: shoulder-surf-protection toggle for
+    # `widget: secret` fields. The widget renderer emits the
+    # input as `type="password"` (browser masks visually with
+    # dots); the button flips `input.type` between password
+    # and text for peek-on-demand. Purely client-side toggle —
+    # no server fetch, no data-flow involvement. The button is
+    # skipped for `write_only` fields since those deliberately
+    # render empty and have no value to peek at.
+    if var.get("widget") == "secret" and not var.get("write_only"):
+        parts.append(
+            f'<button type="button" class="reveal-btn" '
+            f'data-var="{_esc(name)}">Show</button>'
+        )
 
     parts.append("</div>")
     return "".join(parts)

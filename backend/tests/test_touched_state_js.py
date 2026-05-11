@@ -116,50 +116,30 @@ def test_from_default_field_omitted_when_clean():
     # The `data-from-default` attribute is dataset.fromDefault on
     # the element side; either spelling proves the wire-up.
     assert "fromDefault" in src or "from-default" in src or "fromdefault" in src
-    # And the omission shape — there should be at least three
-    # explicit `continue` statements in serialize() (write_only,
-    # from_default, and v1.6.8's encrypted-omit branch).
+    # And the omission shape — there should be at least two
+    # explicit `continue` statements in serialize() (write_only +
+    # from_default). v1.6.8 commit 1 dropped the encrypted-skip
+    # branch: encrypted fields now render with their plaintext in
+    # data-original, so the clean-field branch's
+    # data-original-passthrough is correct without a special case.
     serialize_block = re.search(
         r"function serialize\([^)]*\)\s*\{(.*?)\n\}",
         src, re.DOTALL,
     )
     assert serialize_block is not None
     continues = re.findall(r"continue\s*;", serialize_block.group(1))
-    assert len(continues) >= 3, (
-        f"Expected ≥3 `continue;` statements in serialize() for the "
-        f"write_only, from_default, and encrypted omit branches; "
+    assert len(continues) >= 2, (
+        f"Expected ≥2 `continue;` statements in serialize() for the "
+        f"write_only and from_default omit branches; "
         f"found {len(continues)}"
     )
 
 
-def test_encrypted_field_omitted_when_clean():
-    """v1.6.8: an untouched encrypted-non-write_only field must be
-    omitted from the submit payload. Pre-v1.6.8 the bug:
-
-      1. Page loads with a stored encrypted wifi_password → the
-         renderer emits `<input data-encrypted="true" value=""
-         data-original="">` (plaintext deliberately kept out of HTML).
-      2. Operator hits Save without touching the field.
-      3. Serializer's clean-branch sent `data-original` → empty
-         string → server wrote `""` to KV → password wiped.
-
-    The fix: clean + `data-encrypted="true"` → omit from POST,
-    same shape as the write_only and from_default skip branches.
-    Server preserves the stored value when the field is absent.
-    Explicit clears still work via dirty=true (operator selects
-    and deletes the input content)."""
-    src = _read(_JS_PATH)
-    # `data-encrypted` reaches the JS as dataset.encrypted; either
-    # spelling proves the attribute is consulted.
-    assert (
-        "dataset.encrypted" in src
-        or "data-encrypted" in src
-    ), "serializer must read data-encrypted attribute"
-    # And the skip-shape: a `!dirty` guard adjacent to `encrypted`.
-    assert re.search(
-        r"encrypted\s*&&\s*!dirty",
-        src,
-    ), "serializer must skip clean encrypted fields"
+# v1.6.8 commit 1 removed the encrypted-skip branch + its test
+# (previously `test_encrypted_field_omitted_when_clean`). The
+# encrypted-field-renders-plaintext-data-original approach makes
+# the clean-field branch correct without a special case, so the
+# special case + its test are both gone.
 
 
 def test_dirty_branches_distinguish_live_vs_original():

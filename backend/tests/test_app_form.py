@@ -443,3 +443,79 @@ def test_multiple_fields_all_persisted(client, fake_redis):
     for name, expected in (("a", 1), ("b", 2), ("c", 3)):
         raw = fake_redis._kv[f"kv:demo/dev1/{name}"]
         assert msgpack.unpackb(raw, raw=False) == expected
+
+
+# ----- v1.6.8 commit 1: encrypted-field round-trip (no wipe) --------
+# Pre-v1.6.8 the customer-page renderer had a separate
+# encrypted-Reveal branch that emitted an empty input + Reveal
+# button (plaintext deliberately kept out of the HTML; fetched on
+# click via /peek/kv/). That design's data-original="" meant the
+# touched-state serializer's clean branch always sent empty,
+# clobbering the stored value on any untouched Save. v1.6.7 and
+# v1.6.8's first iteration tried to paper over the bug; commit 1
+# strips the encrypted-Reveal branch entirely. With data-original
+# now carrying the plaintext, a clean submit (no edit) round-trips
+# the value through the form-submit pipeline without changing it.
+#
+# These tests pin that round-trip at the server-side form-submit
+# layer. The renderer-side data-original plumbing is covered in
+# test_widget_renderer.py + test_page_renderer.py; this file picks
+# up where those leave off.
+
+def test_round_trip_clean_encrypted_value_preserves(client, fake_redis):
+    """Clean form-submit round-trip for an encrypted field:
+    operator loads page (no edit), clicks Save. The serializer
+    sends back the value via data-original; server writes it.
+    Effectively a no-op — the stored value is identical to what
+    was there before. Critically: NOT wiped."""
+    _stash_catalog(fake_redis, "demo", {
+        "wifi_password": {"type": "string", "scope": ["app", "device"],
+                          "encrypted": True, "widget": "secret",
+                          "label": "Wi-Fi password"},
+    })
+    # Existing encrypted record. The :enc sidecar reflects the
+    # catalog's intent (set at provision / prior write time).
+    fake_redis._kv["kv:demo/dev1/wifi_password"] = msgpack.packb(
+        "existing-password", use_bin_type=True,
+    )
+    fake_redis._kv["kv:demo/dev1/wifi_password:enc"] = b"1"
+
+    # The serializer's clean-field branch posts the data-original
+    # value verbatim. With the v1.6.8-commit-1 renderer that means
+    # the plaintext round-trips:
+    client.post(
+        "/app/demo/dev1",
+        data={"wifi_password": "existing-password"},  # what the renderer would have populated
+        follow_redirects=False,
+    )
+
+    # Value preserved (NOT wiped to empty).
+    raw = fake_redis._kv["kv:demo/dev1/wifi_password"]
+    assert msgpack.unpackb(raw, raw=False) == "existing-password"
+    # :enc sidecar still set (catalog says encrypted=true).
+    assert fake_redis._kv.get("kv:demo/dev1/wifi_password:enc") == b"1"
+
+
+def test_edited_encrypted_value_updates(client, fake_redis):
+    """The other half of the round-trip: when the operator DOES
+    edit, the new value replaces the old. Sanity check that
+    commit 1's simplification didn't break the edit path."""
+    _stash_catalog(fake_redis, "demo", {
+        "wifi_password": {"type": "string", "scope": ["app", "device"],
+                          "encrypted": True, "widget": "secret",
+                          "label": "Wi-Fi password"},
+    })
+    fake_redis._kv["kv:demo/dev1/wifi_password"] = msgpack.packb(
+        "old-password", use_bin_type=True,
+    )
+    fake_redis._kv["kv:demo/dev1/wifi_password:enc"] = b"1"
+
+    client.post(
+        "/app/demo/dev1",
+        data={"wifi_password": "new-password"},
+        follow_redirects=False,
+    )
+
+    raw = fake_redis._kv["kv:demo/dev1/wifi_password"]
+    assert msgpack.unpackb(raw, raw=False) == "new-password"
+    assert fake_redis._kv.get("kv:demo/dev1/wifi_password:enc") == b"1"
