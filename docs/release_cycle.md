@@ -313,6 +313,19 @@ URL, regardless of the file's actual content.
 for `app.js?v=` to find the references; the version should be
 identical across both files.
 
+**Automated check (post-v1.6.8):** the repo ships a pre-commit hook
+at `.githooks/pre-commit` that catches missed cache-bust bumps at
+`git commit` time. Install once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+When the hook detects a JS or CSS edit without a matching
+`?v=N` bump in the referrer HTML(s), it errors with a specific
+message naming the file pair. Bypass with `git commit --no-verify`
+if you're sure the change doesn't affect runtime (rare).
+
 **Diagnostic when stuck.** Check what's served vs. what you expect:
 
 ```bash

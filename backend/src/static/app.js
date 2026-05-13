@@ -1592,6 +1592,15 @@ async function unsetScope(scope) {
 
 // 3. Activity Logs
 let logFilterClients = new Set();
+// Cached log entries from the last /logs fetch. fetchLogs() stores
+// here, renderLogs() reads + applies client-side filters. Lets the
+// action-filter input narrow live without re-hitting the network
+// per keystroke.
+let _logsCache = [];
+// Free-text substring filter on the `action` column. Case-
+// insensitive; empty = passthrough. Bound to #logsActionFilter's
+// `input` event in initLogsActionFilter().
+let logFilterAction = "";
 let logKnownClients = [];
 let logClientsLoaded = false;
 
@@ -1638,8 +1647,22 @@ async function fetchLogs() {
         endpoint += `&client_id=${encodeURIComponent(id)}`;
     }
     const { data: logs } = await fetchAPI(endpoint);
+    _logsCache = Array.isArray(logs) ? logs : [];
+    renderLogs();
+}
+
+// Render `_logsCache` to the table, applying `logFilterAction` as a
+// case-insensitive substring filter against each row's action column.
+// Split from fetchLogs so the action-filter input can re-render
+// live without re-hitting the network.
+function renderLogs() {
     const tbody = document.getElementById('logsTableBody');
-    tbody.innerHTML = logs.map(l => `
+    if (!tbody) return;
+    const needle = logFilterAction.trim().toLowerCase();
+    const rows = needle
+        ? _logsCache.filter(l => (l.action || '').toLowerCase().includes(needle))
+        : _logsCache;
+    tbody.innerHTML = rows.map(l => `
         <tr>
             <td class="col-log-timestamp">${formatTime(l.timestamp)}</td>
             <td class="col-log-client-id">${escapeHtml(l.client_id)}</td>
@@ -1647,6 +1670,19 @@ async function fetchLogs() {
             <td class="${_logStatusClass(l.status)}">${escapeHtml(l.status)}</td>
         </tr>
     `).join('');
+}
+
+// Bind the action-filter input. Called once at page-load (the
+// element is server-rendered in index.html). Input event updates
+// `logFilterAction` and re-renders; no debounce since the filter
+// runs over an in-memory ~2000-row array — well under a millisecond.
+function initLogsActionFilter() {
+    const input = document.getElementById('logsActionFilter');
+    if (!input) return;
+    input.addEventListener('input', () => {
+        logFilterAction = input.value;
+        renderLogs();
+    });
 }
 
 // Color-class logic for activity log status text. Was a
@@ -2130,9 +2166,11 @@ function _dispatchChange(event) {
 document.addEventListener('DOMContentLoaded', () => {
     document.body.addEventListener('click', _dispatchClick);
     document.body.addEventListener('change', _dispatchChange);
+    initLogsActionFilter();
 });
 
 // Init
 applyWhoami();
 fetchStats();
 fetchSecurityWarnings();
+// changed

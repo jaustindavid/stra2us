@@ -138,7 +138,20 @@
   `[HTTPException]`. Closes the instrumentation gap surfaced
   during v1.6.6 monitoring.
 
-- **[HIGH] Automate the `app.js?v=N` cache-bust.** Whenever
+- ~~**[HIGH] Automate the `app.js?v=N` cache-bust.**~~
+  Landed 2026-05-13 (v1.6.9). Pre-commit hook at `.githooks/pre-commit`
+  detects staged edits to static JS / CSS files and errors if the
+  matching `?v=N` line in the referrer HTML wasn't bumped. Five
+  source→referrer pairs covered (customer + admin surfaces); module
+  imports inside JS files (e.g. `touched_state.js?v=N` import inside
+  `app.js`) also covered. Operators install via
+  `git config core.hooksPath .githooks` (one-time per clone);
+  documented in `docs/release_cycle.md`'s "Pitfall 1" section.
+  Bypass available via `--no-verify` for genuine non-runtime edits.
+
+  *Original entry preserved below for history.*
+
+  Whenever
   `backend/src/static/app/app.js` changes, the `<script src=
   "/app/_static/app.js?v=N">` references in `device.html` and
   `landing.html` must be bumped to a new `N` — otherwise browsers
@@ -636,6 +649,70 @@
   `_catalog/<app>` only. Mirrors the catalog-vs-asset shape rule
   documented in `routes_device.py:22-26` (catalogs are exactly
   two segments; 3+ segments are asset payloads).
+
+- ~~**Activity Logs view: filter box for the `action` column.**~~
+  Landed 2026-05-13 (v1.6.9). Client-side substring filter (option #1
+  from the original entry). `<input id="logsActionFilter">` above
+  the table, case-insensitive substring match, live-render on every
+  keystroke. The `_logsCache` module-level variable holds the last
+  fetched batch so the filter narrows in-memory without re-hitting
+  `/api/admin/logs`. Server-side filter param (option #2) deferred
+  until someone hits the 2000-row in-memory limit in practice.
+
+  *Original entry preserved below for history.*
+
+  
+  Today the Activity Logs admin view (`/admin/#logs`) filters
+  only by `client_id` (multi-select chips). Operators looking
+  for "all `GET /kv/` calls" or "anything matching `wifi_password`"
+  have to eyeball the action column manually, which is brutal
+  on busy fleets where the table has hundreds of rows even after
+  `client_id` narrowing. Add a free-text filter box that narrows
+  the action column.
+
+  Implementation options:
+
+  1. **Client-side substring filter only.** Text input above the
+     table; JS filters rendered rows in real time, case-insensitive
+     substring match. No backend changes. Limitation: only filters
+     what's already been fetched (currently `?limit=2000` per
+     `fetchLogs` in `backend/src/static/app.js:1628`), so deep-
+     historical "find all 500s in the last week" searches would
+     miss anything older than the recent 2000 entries.
+
+  2. **Backend filter param + client-side narrow.** New
+     `action_substring=<X>` query param on `/api/admin/logs`
+     (`routes_admin.py:746` is the existing handler that does
+     `xrevrange` from the `system:activity_log` stream). Server
+     filters before returning, so the response is already narrow
+     and the client can paginate further if needed. Enables
+     searching the full 150k-entry stream. More implementation
+     work but better for forensic investigations.
+
+  3. **Both.** Client-side filter applied to fetched data;
+     server-side filter kicks in when the client filter would
+     return empty AND the user explicitly asks for "search older".
+
+  Recommendation: **start with #1** (10-line JS change in
+  `fetchLogs` + an `<input>` in `index.html`'s logs view). 80% of
+  use cases are recent-history triage and 2000 entries covers
+  that. File #2 as a follow-up if anyone hits the limit in
+  practice.
+
+  UX shape:
+  * Single text input above the logs table, near the existing
+    client_id chip filter
+  * Placeholder: `Filter actions… (e.g. /kv/, wifi_password, POST)`
+  * Case-insensitive substring match; live-filter as user types
+    (debounced ~100ms)
+  * Empty input = no filter (passthrough)
+  * Persists in URL hash or sessionStorage so a refresh doesn't
+    lose context (optional polish)
+
+  Touches: `backend/src/static/app.js:fetchLogs` (or a new
+  filter function), `backend/src/static/index.html` (the logs
+  view's filter row), `backend/src/static/styles.css` for the
+  filter-input look. No backend changes for #1.
 
 - **Scoped admins can't see Activity Logs view.** A non-superuser
   admin (e.g. `austin`, ACL has `critterchron/...` prefixes but no

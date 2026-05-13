@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+# Copyright (c) 2026 Austin David — PolyForm Noncommercial 1.0.0
+# See LICENSE in the repo root.
+#
+# Pre-commit cache-bust check.
+#
+# When a static JS or CSS file gets edited, the `?v=N` query string
+# in its HTML referrer(s) MUST be bumped — otherwise browsers and
+# Cloudflare's edge cache serve the old content under the same URL
+# even after a fresh deploy. The v1.6.x cycle hit this footgun
+# twice; this hook makes the discipline mechanical.
+#
+# Detection model: for each (source, referrer) pair below, if the
+# source is in the staged diff but no `?v=` line in the referrer
+# changed, error out with a clear bump-required message. Operators
+# who genuinely need to commit without bumping (e.g. comment-only
+# changes that they're certain don't affect runtime) can override
+# with `git commit --no-verify`.
+#
+# Install once per clone:
+#     git config core.hooksPath .githooks
+# (See docs/release_cycle.md or this hook's referencing TODO entry
+# for the why.)
+
+set -u  # no -e: we want to gather all violations then exit at the end
+
+REPO_ROOT=$(git rev-parse --show-toplevel)
+cd "$REPO_ROOT"
+
+staged_files=$(git diff --cached --name-only)
+
+# Returns 0 if FILE is in the staged diff.
+in_diff() {
+    echo "$staged_files" | grep -qx "$1"
+}
+
+# Returns 0 if FILE's staged diff has at least one added line matching
+# PATTERN. Matches `+`-prefixed lines only (the new side of the diff).
+referrer_bumped() {
+    local file=$1 pattern=$2
+    # If the file wasn't staged at all, no chance the version bumped.
+    in_diff "$file" || return 1
+    git diff --cached --unified=0 -- "$file" \
+        | grep -E '^\+[^+]' \
+        | grep -qE "$pattern"
+}
+
+violations=()
+
+# Each entry: "SOURCE_FILE|REFERRER_LIST|PATTERN|MESSAGE"
+#   SOURCE_FILE: tracked path that triggers the check when staged.
+#   REFERRER_LIST: space-separated list of files that should have
+#     a bumped ?v= line. At least one must match.
+#   PATTERN: regex matched against added lines in any referrer.
+#   MESSAGE: shown to the operator when the check fails.
+
+check_rule() {
+    local source="$1" referrers="$2" pattern="$3" message="$4"
+    in_diff "$source" || return 0
+    for r in $referrers; do
+        if referrer_bumped "$r" "$pattern"; then
+            return 0
+        fi
+    done
+    violations+=("$message")
+}
+
+# Customer-page app.js → bumped in BOTH landing.html and device.html
+# (they reference the same URL, so a single bump only catches one).
+# We require either to be bumped; the deploy walkthrough has a step
+# to bump both in lock-step. Operators that miss one will hit the
+# cache-bust replay anyway (same URL, same edge cache key).
+check_rule \
+    "backend/src/static/app/app.js" \
+    "backend/src/static/app/landing.html backend/src/static/app/device.html" \
+    'app\.js\?v=[0-9]+' \
+    "backend/src/static/app/app.js changed — bump app.js?v=N in
+   backend/src/static/app/landing.html AND backend/src/static/app/device.html"
+
+# Customer-page touched_state.js is imported by app.js with its own
+# ?v=N query string. ES module imports are URL-cached separately
+# from app.js itself — bumping app.js?v= alone doesn't invalidate
+# the touched_state.js import. (The v1.6.8 cycle learned this.)
+check_rule \
+    "backend/src/static/app/forms/touched_state.js" \
+    "backend/src/static/app/app.js" \
+    'touched_state\.js\?v=[0-9]+' \
+    "backend/src/static/app/forms/touched_state.js changed — bump ?v=N in
+   the import statement inside backend/src/static/app/app.js"
+
+# Admin-side app.js → bumped in static/index.html.
+check_rule \
+    "backend/src/static/app.js" \
+    "backend/src/static/index.html" \
+    'app\.js\?v=[0-9]+' \
+    "backend/src/static/app.js changed — bump app.js?v=N in
+   backend/src/static/index.html"
+
+# Admin-side styles.css → bumped in static/index.html.
+check_rule \
+    "backend/src/static/styles.css" \
+    "backend/src/static/index.html" \
+    'styles\.css\?v=[0-9]+' \
+    "backend/src/static/styles.css changed — bump styles.css?v=N in
+   backend/src/static/index.html"
+
+# Customer-page styles.css → bumped in landing.html and device.html.
+check_rule \
+    "backend/src/static/app/styles.css" \
+    "backend/src/static/app/landing.html backend/src/static/app/device.html" \
+    'styles\.css\?v=[0-9]+' \
+    "backend/src/static/app/styles.css changed — bump styles.css?v=N in
+   backend/src/static/app/landing.html AND backend/src/static/app/device.html"
+
+if [ ${#violations[@]} -gt 0 ]; then
+    echo "✘ Cache-bust pre-commit check failed:"
+    echo
+    for v in "${violations[@]}"; do
+        echo " • $v"
+        echo
+    done
+    echo "Why this matters:"
+    echo " Static files served at \`<path>?v=N\` are cached by browsers + the"
+    echo " CDN under that exact URL. Editing the file without bumping N"
+    echo " means clients keep serving the old content from cache after a"
+    echo " fresh deploy. The v1.6.x cycle hit this twice — hours lost."
+    echo
+    echo "Bypass (if you're sure the change doesn't affect runtime):"
+    echo "   git commit --no-verify"
+    exit 1
+fi
+exit 0

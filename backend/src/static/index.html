@@ -418,6 +418,18 @@
                 
                 <div id="logFilterChips" class="filter-chips"></div>
 
+                <!-- Action filter: client-side substring match against
+                     each row's action column. Filters whatever the
+                     last /logs fetch returned (currently ~2000
+                     entries); for deeper-historical searches a server-
+                     side filter param could be added. -->
+                <div class="logs-action-filter-row">
+                    <input type="search" id="logsActionFilter"
+                           class="logs-action-filter"
+                           placeholder="Filter actions… (e.g. /kv/, wifi_password, POST)"
+                           autocomplete="off">
+                </div>
+
                 <div class="card log-card glass-panel">
                     <table class="data-table">
                         <thead>
@@ -476,6 +488,6 @@
          from under us. To rev: replace the file in _vendor/ + bump
          the ?v= cache-buster. -->
     <script src="_vendor/js-yaml-4.1.0.min.js"></script>
-    <script src="app.js?v=18"></script>
+    <script src="app.js?v=19"></script>
 </body>
 </html>
