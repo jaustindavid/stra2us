@@ -770,6 +770,19 @@ tr.catalog-var-row:hover td { background: rgba(0, 240, 255, 0.06); }
 .sidebar-signout:hover {
     color: var(--accent-blue);
 }
+/* v1.7.0: running-release tag rendered above Sign Out. Populated by
+   app.js via /api/admin/release. Small, low-contrast — operator can
+   confirm "did my deploy go?" at a glance without it stealing focus
+   from the rest of the sidebar. */
+.sidebar-version {
+    color: var(--text-muted, #888);
+    font-size: 0.75rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    margin-bottom: 6px;
+    /* Reserve a line of height even when empty (fetch hasn't
+       returned yet) so the layout doesn't jump on first paint. */
+    min-height: 1em;
+}
 
 /* --- Device picker (Phase 5b: select-not-type ACL editor) ---------- */
 /* v1.6.3: cap the picker's modal-content + make it flex column so the

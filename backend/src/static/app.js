@@ -2169,8 +2169,26 @@ document.addEventListener('DOMContentLoaded', () => {
     initLogsActionFilter();
 });
 
+// v1.7.0: fetch the running release tag and display it in the
+// sidebar footer. Source of truth is `backend/VERSION` (read
+// server-side via `core/version.py`); shown alongside the
+// Sign Out link so an operator can confirm "did my deploy go?"
+// without leaving the browser. Fails silently — a missing badge
+// is less disruptive than an error banner for a cosmetic feature.
+async function fetchAndRenderReleaseVersion() {
+    const badge = document.getElementById('adminVersionBadge');
+    if (!badge) return;
+    try {
+        const { ok, data } = await fetchAPI('/release');
+        if (!ok || !data || !data.version) return;
+        badge.innerText = data.version;
+    } catch (e) {
+        // Network failure — leave the badge empty. No error toast.
+    }
+}
+
 // Init
 applyWhoami();
 fetchStats();
 fetchSecurityWarnings();
-// changed
+fetchAndRenderReleaseVersion();

@@ -16,9 +16,25 @@ versions go here; deep dives go in the linked docs.
 
 The v1.6.x cycle wrapped. Eleven point releases evolved the
 v1.6.0 catalog-app-ui FR baseline into a markedly different
-codebase; v1.7.0 is the boundary marker. No new functionality
-ships at v1.7.0 itself — it's the cumulative state of v1.6.0
-through v1.6.9 stamped as the new stable shape.
+codebase; v1.7.0 is the boundary marker — mostly a cumulative
+state stamp, plus one small new feature.
+
+### New in v1.7.0
+
+* **Running-release tag visible in the admin sidebar.** Source
+  of truth is `backend/VERSION` (a one-line file, manually
+  bumped per release for now). Backend reads it via
+  `core/version.py` and exposes `GET /api/admin/release`; the
+  admin sidebar footer fetches on page load and renders the
+  string above the Sign Out link. Closes the "did my deploy
+  go?" question without operators having to SSH to the host.
+  Filed in TODO.md mid-v1.6.6 after a missed deploy step
+  left staging on v1.6.5 while v1.6.6 instrumentation was
+  expected.
+
+  Follow-up filed: auto-write `backend/VERSION` from
+  `tools/stage promote/deploy` (small shell change ~20 lines).
+  Manual bumping is the v1.7.0 shape; automation comes later.
 
 ### Architectural shifts since v1.6.0
 
@@ -140,8 +156,8 @@ through v1.6.9 stamped as the new stable shape.
 
 ### Closed TODOs through v1.7.0
 
-The TODO list shrank from 13 to 11 net over v1.6.x (8 closures,
-6 additions, net -2). Items closed:
+The TODO list shrank meaningfully over the v1.6.x cycle.
+Items closed:
 
 * `widget:secret` cursor + Monitor Clear regression
 * Catalogs admin view shows asset keys
@@ -153,6 +169,7 @@ The TODO list shrank from 13 to 11 net over v1.6.x (8 closures,
 * `[HIGH]` Cache-bust automation
 * Activity Logs action filter
 * `write_only` multi-writer-race documentation (closed obsolete)
+* Surface the running release version in the admin UI (closed in v1.7.0 itself)
 
 ### Remaining open at v1.7.0
 

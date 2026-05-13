@@ -20,9 +20,21 @@ from api.dependencies import (
 )
 from core.admin_auth import HTPASSWD_FILE, is_rescue_on_default
 from core.perf_log import PerfPhases, PERF_LOG_STREAM
+from core.version import get_release_version
 import os
 
 router = APIRouter()
+
+
+# v1.7.0: surface the running release tag to the admin UI. The
+# admin's sidebar footer fetches this on page load and displays
+# the result alongside the Sign Out link. Public to any authed
+# admin — the version string is not sensitive. Source of truth
+# is `backend/VERSION` (a one-line file bumped per release; see
+# `core/version.py`).
+@router.get("/release")
+async def get_release(_: dict = Depends(get_admin_context)):
+    return {"version": get_release_version()}
 
 # Client IDs we refuse to mint, because they collide with sub-namespaces
 # under each `<app>/`. See "Reserved-name enforcement" in

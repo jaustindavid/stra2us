@@ -68,49 +68,38 @@
   rather than silent data loss, and pursuing it would push
   toward the ETag/versioning territory we explicitly rejected.
 
-- **Surface the running release version in the admin UI.**
-  Today's "what's actually deployed?" answer requires SSHing
-  to the host and running `tools/stage status` (or
-  `git rev-parse --short HEAD` in `$PROD_DIR`). For routine
-  "did my deploy go?" / "is staging on v1.6.6 yet?" questions,
-  a visible version badge in the admin sidebar (or a small
-  status panel) closes the loop without leaving the browser.
-  This TODO was filed mid-debug after a missed deploy step
-  left staging on v1.6.5 while v1.6.6 instrumentation was
-  expected — a "Running: v1.6.5 (4b28654)" badge would have
-  caught it instantly.
+- ~~**Surface the running release version in the admin UI.**~~
+  Landed 2026-05-13 in v1.7.0. Source of truth is `backend/VERSION`
+  (one-line text file); backend reads via `core/version.py` with
+  a `"dev"` fallback when the file is missing. `GET /api/admin/release`
+  returns `{"version": "<tag>"}`; admin sidebar footer fetches on
+  page load and renders above the Sign Out link. Manual bump per
+  release for now — see follow-up TODO for the eventual
+  `tools/stage` automation.
 
-  Three implementation shapes to weigh:
-  1. **Build-time env var.** `tools/stage promote` and
-     `tools/stage deploy` pass `--build-arg RELEASE_TAG=<tag>`
-     (or `<commit>`); Dockerfile bakes it as `ENV
-     STRA2US_RELEASE=<value>`. Backend reads the env at
-     startup, exposes via a `/api/admin/release` endpoint.
-     Cleanest separation; survives container restarts;
-     doesn't depend on the runtime tree.
-  2. **Runtime git read.** Backend on startup runs
-     `git -C /app rev-parse --short HEAD` against the
-     bind-mounted `./backend`. Cheap (one syscall) but
-     requires the `.git` directory accessible inside the
-     container — the current volume mount may or may not
-     include it depending on `.dockerignore` shape.
-  3. **VERSION file.** `tools/stage` writes a one-line
-     `./backend/VERSION` file at deploy time; backend
-     reads it. Simplest; no Dockerfile changes; works
-     regardless of git/.dockerignore situation.
+- **Auto-write `backend/VERSION` from `tools/stage promote/deploy`.**
+  v1.7.0 shipped the runtime-side of the release-version display
+  but kept the file-bump manual. `tools/stage promote <tag>`
+  should write the tag verbatim to `$PROD_DIR/backend/VERSION`
+  before `docker compose build`; `tools/stage deploy <ref>`
+  should write a `<short-sha>-<branch>` shape (or just the ref)
+  to the staging clone's `backend/VERSION`. Backend reads it
+  unchanged via `core/version.py`. Net effect: the badge stays
+  current automatically; operators don't have to remember to
+  bump the file as part of each release commit (the same class
+  of footgun the cache-bust pre-commit hook addresses for
+  static-asset `?v=N`).
 
-  Recommendation: shape **#1** for production (env var is
-  the canonical "build artifact carries identity" pattern)
-  with shape **#3** as the staging fallback (since staging
-  rebuilds on every push and we want the SHA, not just the
-  tag). Render in admin sidebar footer near the Sign-out
-  link, with the format `v<X.Y.Z> (<short-sha>)` — clickable
-  to copy the full SHA, optional.
+  Implementation shape: ~20 lines of shell in `tools/stage`,
+  added to both `cmd_promote` and `cmd_deploy`. Could also add
+  a pre-commit hook entry to remind operators bumping the file
+  manually that they should commit it — though once the
+  automation is in place this becomes redundant.
 
-  Small scope: ~30 lines backend + ~10 lines frontend +
-  build plumbing for #1. Pairs naturally with the cache-bust
-  automation TODO since both are "deploy hygiene"
-  improvements.
+  Bonus: include the short SHA alongside the tag (e.g.
+  `v1.7.0 (4b28654)`) so the admin badge distinguishes
+  "v1.7.0 as tagged" from "v1.7.0-built-from-this-commit-which-
+  may-have-uncommitted-changes-or-be-mid-build."
 
 - **Extend v1.6.6 instrumentation to catch `HTTPException(500)` too.**
   v1.6.6's activity-log tagging works for raw exceptions
