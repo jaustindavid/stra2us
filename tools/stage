@@ -71,6 +71,31 @@ require_env_file() {
     [[ -f "$STAGING_ENV_FILE" ]] || die "$STAGING_ENV_FILE missing — see docs/staging_environment.md sub-task 3d"
 }
 
+# v1.7.1 Sprint 2: write the running-release tag to backend/VERSION
+# inside <target-dir>'s repo clone. Backend's core/version.py reads
+# this file at startup; the admin sidebar fetches it via
+# /api/admin/release and renders in the footer. Format:
+# "<ref> (<short-sha>)" — both pieces so the badge distinguishes a
+# clean-tagged deploy from an in-flight mid-cycle commit.
+#
+# Idempotent: called from cmd_deploy (staging) and cmd_promote
+# (prod) after their respective `git checkout` step. The file
+# lives at <target-dir>/backend/VERSION; the container bind-mounts
+# ./backend → /app so the new content is visible after the next
+# `docker compose up -d` (which both callers run).
+#
+# `<target-dir>` defaults to the current repo for cmd_deploy
+# (running locally) or $PROD_DIR for cmd_promote.
+_write_version_file() {
+    local ref="$1"
+    local target_dir="${2:-.}"
+    local short_sha
+    short_sha=$(git -C "$target_dir" rev-parse --short HEAD)
+    local version_file="$target_dir/backend/VERSION"
+    printf "%s (%s)\n" "$ref" "$short_sha" > "$version_file"
+    echo "→ wrote $version_file: $ref ($short_sha)"
+}
+
 # True if the username has an entry in the host-side admin.htpasswd.
 htpasswd_has_user() {
     local user="$1"
@@ -213,9 +238,15 @@ cmd_deploy() {
         git fetch
         git checkout -B staging-current "$ref"
     else
-        echo "→ git pull on current branch ($(git rev-parse --abbrev-ref HEAD))"
+        ref="$(git rev-parse --abbrev-ref HEAD)"
+        echo "→ git pull on current branch ($ref)"
         git pull --ff-only
     fi
+
+    # v1.7.1 Sprint 2: write the running-release tag so the admin
+    # sidebar's version badge reflects what's actually deployed.
+    # Done after the checkout so the SHA matches the new tree.
+    _write_version_file "$ref" "."
 
     echo
     echo "→ rebuilding image and restarting stack"
@@ -282,6 +313,12 @@ cmd_promote() {
     echo
     echo "→ checkout -B deploy $tag in $PROD_DIR"
     git -C "$PROD_DIR" checkout -B deploy "$tag"
+
+    # v1.7.1 Sprint 2: write the running-release tag to the prod
+    # clone's backend/VERSION. Backend reads it on container start;
+    # admin badge surfaces it. Done after the checkout so the SHA
+    # matches the tagged tree.
+    _write_version_file "$tag" "$PROD_DIR"
 
     echo
     echo "→ docker compose build + up (prod). With bind-mounted backend,"
