@@ -69,11 +69,11 @@ def _is_browser_host(request: Request) -> bool:
 def _path_needs_admin_auth(path: str) -> bool:
     """True for paths that should be gated by the admin htpasswd / cookie
     auth flow. Includes the canonical `/admin*` and `/api/admin*` paths
-    plus the customer-facing `/app/<app>/<device>/...` paths
-    (fr_application_view.md). The bare `/app/` landing form, static
-    assets under `/app/_static/`, and the `/api/app/lookup_device`
-    endpoint stay public — a customer needs to be able to reach them
-    BEFORE knowing their device URL or having a login.
+    plus the customer-facing `/app/...` paths (fr_application_view.md,
+    including v1.7.1 Sprint 3's tightening of the bare `/app/` landing
+    form). Public exceptions: OAuth login flow, logout, static assets,
+    per-app theme + asset bundles, and CSP-violation reports —
+    anything a browser or device needs to reach without a session.
     """
     if path.startswith("/oauth/"):
         return False  # OAuth login/callback/unauthorized must be reachable
@@ -85,8 +85,6 @@ def _path_needs_admin_auth(path: str) -> bool:
                       # broken state without clearing cookies manually.
     if path.startswith("/admin") or path.startswith("/api/admin"):
         return True
-    if path == "/app" or path == "/app/":
-        return False  # bare landing form, public
     if path.startswith("/app/_static/"):
         return False  # public static assets — reuses the `_`-prefixed
                       # reserved-namespace convention from `_catalog/`
@@ -102,8 +100,24 @@ def _path_needs_admin_auth(path: str) -> bool:
                       # nothing sensitive. Customer page references
                       # via <link rel="stylesheet">. See
                       # backend/src/api/routes_app_theme.py.
+    # v1.7.1 Sprint 3: gate `/app/` landing form AND
+    # `/api/app/lookup_device` behind admin auth. Pre-v1.7.1 both
+    # were intentionally public — the customer needed to resolve a
+    # device name → app *before* OAuth could gate the per-device
+    # page. That made `/api/app/lookup_device` enumerable: an
+    # unauthenticated attacker could probe device names and learn
+    # which exist + which app each belongs to. OAuth + the admin
+    # allowlist now handles enumeration-prevention without a CAPTCHA
+    # dependency. UX cost: one OAuth roundtrip on first visit per
+    # session; the session cookie covers subsequent visits.
+    if path == "/app" or path == "/app/":
+        return True   # landing form — was public pre-v1.7.1
+    if path == "/api/app/lookup_device":
+        return True   # device-name resolver — was public pre-v1.7.1
     if path.startswith("/api/app/"):
-        return False  # public lookup endpoints
+        return False  # other public app endpoints (none today;
+                      # forward-compat for hypothetical future
+                      # public app-facing endpoints)
     if path == "/api/_csp_report":
         return False  # browsers POST CSP violations same-origin without
                       # a session — the underscore-prefixed reserved

@@ -241,11 +241,15 @@ async def device_page(app: str, device: str, request: Request):
 @router.get("/api/app/lookup_device", include_in_schema=False)
 async def lookup_device(name: str):
     """Resolve a device name → its app. Returns `{app: "<app>"}` or 404.
-    Public — no auth required.
 
-    Captcha-gated at the edge in production (Cloudflare Turnstile or
-    equivalent) to prevent device-name enumeration. See
-    docs/fr_application_view.md > "Anti-enumeration".
+    **Auth (v1.7.1+):** admin session required, same as the
+    `/app/` landing form. The auth middleware in `main.py` enforces
+    this — see `_path_requires_auth`. Pre-v1.7.1 this endpoint was
+    intentionally public, which made it enumerable: an unauthed
+    attacker could probe device names and learn (a) which exist,
+    (b) which app they belong to. v1.7.1 Sprint 3 closed that by
+    requiring an OAuth-allowlisted admin session before either
+    `/app/` or this lookup endpoint is reachable.
 
     Lookup mechanism (v1.6.7+):
 
