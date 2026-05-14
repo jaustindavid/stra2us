@@ -150,6 +150,35 @@ class Stra2usClient:
             )
         return r
 
+    def post_queue(self, topic: str, payload, ttl: int | None = None) -> requests.Response:
+        """POST /q/<topic>. msgpack-encodes `payload`. `ttl` is the
+        per-message expiry in seconds (default server-side is 60s,
+        per `routes_device.py:enqueue_message`); pass an explicit
+        value to override. The server stamps the consumer-skip-after
+        deadline into each entry's `exp` field — older messages are
+        filtered at consume time.
+
+        Returns the signed response. The base `_request` already
+        verifies the response signature; signature failure raises.
+
+        Used by v1.7.2 Sprint 5's `synth-traffic` CLI (and the
+        v1.7.2 Sprint 6 device-flow smoke test that builds on it),
+        but kept general-purpose — any client wanting to POST a
+        signed queue message has it.
+        """
+        body = msgpack.packb(payload, use_bin_type=True)
+        # URL-encode each segment so slashes stay as separators
+        # (mirrors `_kv_uri`'s shape).
+        uri = "/q/" + "/".join(quote(p, safe="") for p in topic.split("/"))
+        if ttl is not None:
+            uri += f"?ttl={int(ttl)}"
+        r = self._request("POST", uri, body, "application/x-msgpack")
+        if not (200 <= r.status_code < 300):
+            raise Stra2usError(
+                f"POST /q/{topic} → {r.status_code}: {r.text[:200]}"
+            )
+        return r
+
     def delete(self, key: str) -> None:
         """DELETE /kv/<key>. Idempotent — succeeds whether the key existed."""
         r = self._request("DELETE", self._kv_uri(key), b"", None)
