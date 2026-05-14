@@ -5,6 +5,7 @@
 
 Implements the FR's "Renderer dispatch" table:
 
+    type=int, has enum, widget=radio      → radio button group   [v1.7.1]
     type=int, has enum                    → <select>
     type=int, has min+max+widget=slider   → <input type="range">
     type=int, has min/max                 → <input type="number" min max>
@@ -20,8 +21,16 @@ Implements the FR's "Renderer dispatch" table:
 Plus extensions for the existing schema's other types:
 
     type=enum (legacy, with `values:`)    → <select>
+    type=float, has enum, widget=radio    → radio button group   [v1.7.1]
+    type=float, has enum                  → <select>             [v1.7.1]
     type=float                            → <input type="number" step="any" …>
+    type=bool, widget=radio               → true/false radios    [v1.7.1]
     type=bool                             → <select> with true/false
+
+The v1.7.1 generalization: `widget: radio` opts into a radio
+group for any enum-backed field (or `type: bool`'s implicit
+[true, false] enum). Pre-v1.7.1 it was gated to type=string
+only.
 
 Forward compat: unknown `widget:` hints fall through to the
 type-default, never raise. The FR's "old catalogs render at
@@ -421,6 +430,13 @@ def render_widget(name: str, var: dict, current: Any) -> str:
 
     if var_type == "int":
         if enum_choices is not None:
+            # v1.7.1 (Sprint 1): widget:radio now applies to any
+            # enum-having field, not just type:string. Pre-v1.7.1
+            # int+enum always rendered as <select>; now the catalog
+            # author can opt into radios for the typical "small
+            # choice set" case (binary flags, 2-3 mode options).
+            if var.get("widget") == "radio":
+                return _render_radio(name, var, current, enum_choices)
             return _render_select(name, var, current, enum_choices)
         if (var.get("widget") == "slider"
                 and _effective_min(var) is not None
@@ -430,10 +446,26 @@ def render_widget(name: str, var: dict, current: Any) -> str:
 
     if var_type == "float":
         if enum_choices is not None:
+            # v1.7.1 (Sprint 1): same radio opt-in for float+enum.
+            # Float enums are rare in practice but the renderer is
+            # type-agnostic — the radio just emits the string-cast
+            # value, which the form-submit decoder reverses via
+            # json.loads fallback.
+            if var.get("widget") == "radio":
+                return _render_radio(name, var, current, enum_choices)
             return _render_select(name, var, current, enum_choices)
         return _render_number(name, var, current)
 
     if var_type == "bool":
+        # v1.7.1 (Sprint 1): bool fields render as <select> by
+        # default (the pre-v1.7.1 behavior). With widget:radio,
+        # synthesize the implicit [true, false] enum and route
+        # through _render_radio. Matches the "every enum-backed
+        # field is select-default, radio-opt-in" rule, treating
+        # bool as having an implicit two-option enum.
+        if var.get("widget") == "radio":
+            bool_choices = [("true", "true"), ("false", "false")]
+            return _render_radio(name, var, current, bool_choices)
         return _render_bool(name, var, current)
 
     if var_type in ("string", "enum"):

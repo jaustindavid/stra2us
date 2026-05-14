@@ -225,15 +225,24 @@ def _lint_field_widget(var: Var, name: str, issues: list[LintIssue]) -> None:
                 f"`widget: secret` only valid on `type: string` (got {var.type!r})",
             ))
     elif w == "radio":
-        if var.type != "string":
-            issues.append(LintIssue(
-                "error", base,
-                f"`widget: radio` only valid on `type: string` (got {var.type!r})",
-            ))
+        # v1.7.1 (Sprint 1): relaxed from `type: string` only → any
+        # type with an enum. Pre-v1.7.1 the rule was "radio only on
+        # type: string + enum"; that was historical (radio was added
+        # during P0 for the string-enum case) not principled. A
+        # binary flag rendered as `type: int` + `enum: [{value: 1,
+        # label: "On"}, {value: 0, label: "Off"}]` could just as
+        # naturally be a radio group as a select. `type: bool` gets
+        # special-cased: no explicit enum required since the
+        # implicit choice set is `[true, false]`.
+        if var.type == "bool":
+            # bool is enum-shaped by definition — no extra check.
+            pass
         elif var.enum is None:
             issues.append(LintIssue(
                 "error", base,
-                "`widget: radio` requires `enum:` to declare the choice set",
+                "`widget: radio` requires `enum:` to declare the "
+                "choice set (or `type: bool`, which has an implicit "
+                "true/false enum)",
             ))
 
 

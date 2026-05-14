@@ -215,6 +215,46 @@ def test_widget_radio_string_with_enum_ok():
     assert errors(lint_catalog(cat)) == []
 
 
+# ----- v1.7.1 (Sprint 1): widget:radio on any enum-backed field ----
+
+def test_widget_radio_int_with_enum_ok():
+    """v1.7.1: widget:radio now applies to int fields with an enum.
+    Pre-v1.7.1 this was a hard error ('only valid on type: string')."""
+    cat = _cat(vars={
+        "flag": Var(type="int", scope=["app"], widget="radio",
+                    enum=[0, 1]),
+    })
+    assert errors(lint_catalog(cat)) == []
+
+
+def test_widget_radio_bool_ok_without_explicit_enum():
+    """v1.7.1: type:bool gets a special case in the radio lint
+    because the implicit choice set is [true, false] — no
+    explicit enum required to opt into radios."""
+    cat = _cat(vars={
+        "enabled": Var(type="bool", scope=["app"], widget="radio"),
+    })
+    assert errors(lint_catalog(cat)) == []
+
+
+def test_widget_radio_int_without_enum_errors():
+    """Counter-test: an int field without enum still can't be a
+    radio. The relaxation is 'must have enum' not 'must be any
+    type at all'."""
+    cat = _cat(vars={
+        "n": Var(type="int", scope=["app"], widget="radio"),
+    })
+    issues = errors(lint_catalog(cat))
+    assert any("requires `enum:`" in i.message for i in issues)
+
+
+# (Float + enum + widget:radio is supported by the renderer
+# defensively, but the catalog model's `Var.enum: list[str | int |
+# EnumChoice]` doesn't accept float literals — so the path isn't
+# reachable through normal publish. No test for it; the renderer
+# dispatch is wired for forward-compat.)
+
+
 # ----- field-level: string-only hints -----
 
 def test_multiline_only_on_string():
