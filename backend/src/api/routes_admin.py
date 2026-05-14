@@ -933,6 +933,171 @@ async def restore_keys(payload: BackupPayload, force: bool = Query(False), _: di
     return results
 
 
+# --- Backup / Restore v2: whole-instance + per-app (v1.8.0 Sprint 7) ---
+#
+# Successor to `/keys/backup` (which only covers client credentials).
+# Envelope format + Redis-side (de)serializers live in
+# `services/backup_format.py` and `services/backup_io.py`; this
+# section is the HTTP/auth glue.
+#
+# Sensitive-data warning: dumps contain HMAC secrets, OAuth-mapped
+# admin ACL rows, and at-rest encrypted KV plaintext (the wire-
+# encryption inverse). Treat dumps with password-manager sensitivity.
+# `X-Stra2us-Sensitive: true` flagged on every dump response so
+# downstream proxies + logging pipelines can scrub.
+
+
+_DUMP_RESPONSE_HEADERS = {
+    "X-Stra2us-Sensitive": "true",
+    "Cache-Control": "no-store",   # don't let an intermediary cache a dump
+}
+
+
+def _dump_filename(env) -> str:
+    """Friendly download filename — operator-readable, namespace-scoped."""
+    if env.app:
+        return f"stra2us_backup_{env.app}_{env.exported_at}.json"
+    return f"stra2us_backup_whole_{env.exported_at}.json"
+
+
+@router.get("/backup")
+async def backup_whole(
+    include_logs: bool = Query(False, description="Include system:activity_log entries (off by default — log dumps are typically large and rarely load-bearing for restores)."),
+    _: dict = Depends(require_admin_superuser),
+):
+    """Whole-instance dump: clients, admin_acls, KV (incl. catalogs +
+    assets), queues, device_to_app reverse index, optionally activity
+    log. See `services/backup_format.py` for the envelope schema.
+
+    Suitable for full-server migrations + periodic offline backups.
+    For per-app exports use `GET /backup/app/<app>`.
+    """
+    from services.backup_io import collect_whole_envelope
+    redis = get_redis_client()
+    env = await collect_whole_envelope(redis, include_logs=include_logs)
+    return JSONResponse(
+        content=env.to_json(),
+        headers={
+            **_DUMP_RESPONSE_HEADERS,
+            "Content-Disposition": f"attachment; filename={_dump_filename(env)}",
+        },
+    )
+
+
+@router.get("/backup/app/{app}")
+async def backup_per_app(
+    app: str,
+    include_logs: bool = Query(False),
+    _: dict = Depends(require_admin_superuser),
+):
+    """Per-app dump: every load-bearing key whose namespace belongs
+    to `<app>`. Clients, admin_acls, KV (incl. `_catalog/<app>` and
+    `_catalog/<app>/_assets/...`), queues under `<app>/...`, the
+    `device_to_app` rows pointing at `<app>`, and (with
+    `?include_logs=1`) activity-log entries whose `client_id` is one
+    of the included clients.
+
+    Wildcard admins are NOT included — they're instance-scoped (not
+    per-app); the destination instance should provision its own.
+
+    Useful for cloning an app's state to a fresh stack, onboarding a
+    new instance, or surgical restores.
+    """
+    if not app.strip() or "/" in app:
+        raise HTTPException(status_code=400, detail="invalid app name")
+    from services.backup_io import collect_per_app_envelope
+    redis = get_redis_client()
+    env = await collect_per_app_envelope(redis, app, include_logs=include_logs)
+    return JSONResponse(
+        content=env.to_json(),
+        headers={
+            **_DUMP_RESPONSE_HEADERS,
+            "Content-Disposition": f"attachment; filename={_dump_filename(env)}",
+        },
+    )
+
+
+@router.post("/restore")
+async def restore_whole(
+    request: Request,
+    force_overwrite: bool = Query(False, description="Replace existing values. Default (false) = skip any key that already exists."),
+    _: dict = Depends(require_admin_superuser),
+):
+    """Restore from a whole-instance dump. Default semantics: skip-
+    existing, return a structured per-section list of what was
+    restored / skipped / overwritten. Pass `?force_overwrite=1` to
+    replace existing values.
+
+    Refuses envelopes whose `dump_kind` is not `"whole"` — use the
+    per-app endpoint for per-app envelopes. Refuses unknown
+    `stra2us_backup_version` values; future v2 dumps need either a
+    server that understands v2 or a manual migration.
+    """
+    from services.backup_format import BackupEnvelope, BackupFormatError
+    from services.backup_io import apply_envelope
+    body = await request.json()
+    try:
+        env = BackupEnvelope.from_json(body)
+    except BackupFormatError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if env.dump_kind != "whole":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"dump_kind={env.dump_kind!r}; this endpoint accepts "
+                f"only whole-instance dumps. Use /restore/app/<app> for per-app."
+            ),
+        )
+    redis = get_redis_client()
+    result = await apply_envelope(redis, env, force_overwrite=force_overwrite)
+    return result
+
+
+@router.post("/restore/app/{app}")
+async def restore_per_app(
+    app: str,
+    request: Request,
+    force_overwrite: bool = Query(False),
+    _: dict = Depends(require_admin_superuser),
+):
+    """Restore from a per-app dump, with the destination-app scope
+    enforced regardless of what the envelope claims.
+
+    Defense in depth: the URL path's `<app>` is the authoritative
+    filter — keys that fall outside `<app>/...` / `_catalog/<app>` are
+    rejected before any write, even if the envelope's `app` field
+    says otherwise. The response includes any rejected keys under
+    `rejected_outside_app_filter` so the operator can audit.
+
+    Accepts either a per-app envelope (recommended) or a whole-
+    instance envelope (in which case only the `<app>`-matching slice
+    is imported). Refuses envelopes whose `app` field disagrees with
+    the URL — that's an obvious operator mistake worth flagging.
+    """
+    if not app.strip() or "/" in app:
+        raise HTTPException(status_code=400, detail="invalid app name")
+    from services.backup_format import BackupEnvelope, BackupFormatError
+    from services.backup_io import apply_envelope
+    body = await request.json()
+    try:
+        env = BackupEnvelope.from_json(body)
+    except BackupFormatError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if env.app is not None and env.app != app:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"envelope app={env.app!r} does not match URL app={app!r}; "
+                f"refusing cross-app restore"
+            ),
+        )
+    redis = get_redis_client()
+    result = await apply_envelope(
+        redis, env, force_overwrite=force_overwrite, app_filter=app,
+    )
+    return result
+
+
 # --- Performance log (over-threshold requests) ---
 
 @router.get("/perf_log")

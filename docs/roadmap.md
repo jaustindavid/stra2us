@@ -656,7 +656,19 @@ fails with a clear error message naming the failing step.
 
 ---
 
-## Sprint 7 — Backup/restore: whole-instance + per-app dumps
+## ~~Sprint 7 — Backup/restore: whole-instance + per-app dumps~~
+
+**Landed 2026-05-14 in v1.8.0** (the format-stability framing won —
+the dump envelope is now a quasi-public contract). `GET /backup` +
+`GET /backup/app/<app>`, `POST /restore` + `POST /restore/app/<app>`
+with `?force_overwrite=1` and `?include_logs=1` semantics. Pure-data
+envelope module `services/backup_format.py` (with 31 round-trip
+tests pinning the format byte-for-byte) split from Redis-side
+`services/backup_io.py` (15 integration tests). Per-app restore is
+sandboxed: keys outside `<app>/...` / `_catalog/<app>` are rejected
+even if the envelope claims otherwise. Full schema documented in
+[`docs/fr_backup_envelope_v1.md`](fr_backup_envelope_v1.md). Admin
+UI for trigger + download deferred to a v1.8.x follow-up (TODO.md).
 
 **Target release:** v1.7.3 — *or v1.8.0 if you decide this
 release warrants the minor bump given backup formats are a
