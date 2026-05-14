@@ -15,12 +15,24 @@
 #   logs [service]       Tail logs (default: all services)
 #   status               Show staging container states
 #   wait-tunnel          Poll cloudflared logs until 4 connections register
-#   smoke                Run smoke test against staging hostnames
+#   smoke                Run smoke test against staging hostnames.
+#                        Also runs the device-flow smoke (Sprint 6,
+#                        v1.7.2) unless --skip-device-flow is passed.
+#   smoke-device         Run only the device-flow smoke (HMAC-signed
+#                        POST/PUT/GET against /q/ and /kv/ via
+#                        `stra2us synth-traffic`). Provisions the
+#                        smoke-test device automatically on first run.
 #   smoke-prod           Run smoke test against prod hostnames
 #                        (sources $PROD_DIR/.env from .deploy-config)
 #   seed-users [--force] Provision the smoke + admin + OAuth seed users
 #                        Idempotent: skips users already in htpasswd + Redis.
 #                        --force re-provisions regardless of existing state.
+#   seed-smoke-device    Provision the device-flow smoke HMAC client
+#   [--force]            (`smoke-test-device`) on staging Redis with the
+#                        `_smoke/<id>:rw` + `_smoke/public:rw` ACL.
+#                        Idempotent: reuses an existing secret unless
+#                        --force regenerates. Invoked transitively by
+#                        `tools/stage smoke` on first run.
 #   deploy [ref]         git pull (or checkout <ref>), rebuild image,
 #                        restart stack, wait for tunnel.
 #                        For a branch never checked out locally on the
@@ -51,6 +63,15 @@ STAGING_TUNNEL_SERVICE="cloudflared-staging"
 STAGING_BROWSER_HOST="stra2us-staging.austindavid.com"
 STAGING_DEVICE_HOST="iot-staging.stra2us.austindavid.com"
 STAGING_DEVICE_PORT="8253"
+
+# v1.7.2 Sprint 6: device-flow smoke test. Stable identifiers so the
+# secret stays put across runs (operators see a single recurring entry
+# in the activity log for the smoke probe — useful for "is this test
+# still running?" triage). The leading underscore on the app name
+# signals "internal" so operators don't confuse it with a real
+# customer-facing app in the admin UI.
+SMOKE_DEVICE_CLIENT_ID="smoke-test-device"
+SMOKE_DEVICE_APP="_smoke"
 
 # --- helpers ---------------------------------------------------------
 
@@ -108,6 +129,69 @@ redis_has_acl() {
     local v
     v=$(dcs exec -T "$STAGING_BACKEND_SERVICE" redis-cli EXISTS "admin_acls:$user" 2>/dev/null | tr -d '\r\n')
     [[ "$v" == "1" ]]
+}
+
+# v1.7.2 Sprint 6 helpers.
+#
+# Print the smoke device's existing secret, or empty string if the
+# client hasn't been provisioned yet. Used to decide whether
+# `seed-smoke-device` is a no-op and to fetch the secret for
+# `smoke-device` to pass to the CLI.
+_redis_smoke_device_secret() {
+    dcs exec -T "$STAGING_BACKEND_SERVICE" redis-cli \
+        GET "client:${SMOKE_DEVICE_CLIENT_ID}:secret" 2>/dev/null \
+        | tr -d '\r\n'
+}
+
+# Mint a 32-byte hex secret (matches backend/src/core/security.py).
+# Using python3 from the host (not the container) keeps this fast and
+# avoids a needless `dcs exec` round-trip for what's a 1-liner.
+_mint_secret_hex() {
+    python3 -c 'import secrets; print(secrets.token_hex(32))'
+}
+
+# Idempotently ensure the smoke-test HMAC client exists with the
+# device-on-app ACL shape (matches `provision_device` in
+# routes_admin.py). Honors `$force` from the caller's scope: 1 →
+# regenerate the secret; 0 → reuse the existing one if any.
+#
+# ACL: rw on `_smoke/smoke-test-device` (the device's own namespace)
+# + rw on `_smoke/public` (the shared topic the synth-traffic queue
+# writes target). Wholesale-replaces whatever ACL was there before —
+# safe because no other code provisions this client_id.
+#
+# Prints the secret hex to stdout on success so the caller can stash
+# it. Stderr gets human-readable progress.
+_ensure_smoke_device() {
+    local force="${1:-0}"
+    local existing
+    existing=$(_redis_smoke_device_secret)
+
+    local secret
+    if [[ -n "$existing" && "$force" != "1" ]]; then
+        secret="$existing"
+        echo "  ✓ smoke device already provisioned; reusing existing secret" >&2
+    else
+        secret=$(_mint_secret_hex)
+        dcs exec -T "$STAGING_BACKEND_SERVICE" redis-cli \
+            SET "client:${SMOKE_DEVICE_CLIENT_ID}:secret" "$secret" >/dev/null
+        if [[ -n "$existing" ]]; then
+            echo "  ✓ smoke device secret regenerated (--force)" >&2
+        else
+            echo "  ✓ smoke device secret minted" >&2
+        fi
+    fi
+
+    # ACL always replaced — cheap and safer than diffing JSON. Format
+    # matches the provision_device endpoint's output exactly so an
+    # operator could equivalently re-provision via the admin UI.
+    local acl
+    acl="{\"permissions\":[{\"prefix\":\"${SMOKE_DEVICE_APP}/${SMOKE_DEVICE_CLIENT_ID}\",\"access\":\"rw\"},{\"prefix\":\"${SMOKE_DEVICE_APP}/public\",\"access\":\"rw\"}]}"
+    dcs exec -T "$STAGING_BACKEND_SERVICE" redis-cli \
+        SET "client:${SMOKE_DEVICE_CLIENT_ID}:acl" "$acl" >/dev/null
+    echo "  ✓ smoke device ACL set: ${SMOKE_DEVICE_APP}/${SMOKE_DEVICE_CLIENT_ID}:rw + ${SMOKE_DEVICE_APP}/public:rw" >&2
+
+    printf "%s" "$secret"
 }
 
 # --- subcommands -----------------------------------------------------
@@ -188,22 +272,104 @@ cmd_wait_tunnel() {
 
 cmd_smoke() {
     require_env_file
+
+    # v1.7.2 Sprint 6: `--skip-device-flow` skips the device-flow
+    # smoke (HMAC POST/PUT/GET via stra2us synth-traffic). Useful from
+    # a container host that doesn't have python/venv set up. Other
+    # flags pass through to smoke_test.sh untouched.
+    local skip_device_flow=0
+    local hostname_args=()
+    for a in "$@"; do
+        case "$a" in
+            --skip-device-flow) skip_device_flow=1 ;;
+            *)                  hostname_args+=("$a") ;;
+        esac
+    done
+
     echo "→ running smoke test against staging hostnames"
     # `set -a` auto-exports anything sourced; isolated to a subshell.
-    # Forwards any flags (e.g. --skip-device, --quick) on to
-    # smoke_test.sh. Reminder: device-host checks don't work
-    # reliably from the container host itself (Synology hairpin NAT
-    # / loopback issue) — pass --skip-device when running on the
-    # host, or run smoke from a LAN dev box. See TODO.md and the
-    # smoke_test.sh header.
+    # Reminder: device-host checks don't work reliably from the
+    # container host itself (Synology hairpin NAT / loopback issue) —
+    # pass --skip-device when running on the host, or run smoke from
+    # a LAN dev box. See TODO.md and the smoke_test.sh header.
     (
         set -a
         source "$STAGING_ENV_FILE"
         STRA2US_BROWSER_HOST="$STAGING_BROWSER_HOST" \
         STRA2US_DEVICE_HOST="$STAGING_DEVICE_HOST" \
         STRA2US_DEVICE_PORT="$STAGING_DEVICE_PORT" \
-        "$REPO_ROOT/tools/smoke_test.sh" "$@"
+        "$REPO_ROOT/tools/smoke_test.sh" "${hostname_args[@]}"
     )
+    local hostname_rc=$?
+
+    local device_rc=0
+    if (( skip_device_flow )); then
+        echo
+        echo "→ device-flow smoke skipped (--skip-device-flow)"
+    else
+        echo
+        cmd_smoke_device
+        device_rc=$?
+    fi
+
+    return $(( hostname_rc | device_rc ))
+}
+
+# v1.7.2 Sprint 6: HMAC device-protocol smoke. Auto-provisions the
+# smoke-test device on first run (subsequent runs are no-ops — the
+# Redis SET is idempotent and the existing secret is reused).
+cmd_smoke_device() {
+    require_env_file
+
+    # Ensure the smoke device is provisioned and fetch its secret in
+    # one shot. `_ensure_smoke_device` prints to stderr; secret comes
+    # back on stdout. Note `force=0` here — the only way to regenerate
+    # the secret is the explicit `seed-smoke-device --force` path so a
+    # routine `tools/stage smoke` never rotates secrets out from under
+    # a running soak.
+    echo "→ ensuring smoke-test device is provisioned"
+    local secret
+    secret=$(_ensure_smoke_device 0)
+    if [[ -z "$secret" ]]; then
+        err "failed to obtain smoke-device secret — see container logs"
+        return 1
+    fi
+
+    echo
+    # Run the device-flow checks in an isolated subshell so the export
+    # of STRA2US_SECRET_HEX doesn't leak into the operator's parent
+    # shell. The Python CLI reads the host/client_id/secret from env
+    # (`tools/stra2us_cli/config.py:resolve`), so this is the
+    # one-and-only credential plumbing needed.
+    (
+        STRA2US_HOST="http://${STAGING_DEVICE_HOST}:${STAGING_DEVICE_PORT}" \
+        STRA2US_CLIENT_ID="$SMOKE_DEVICE_CLIENT_ID" \
+        STRA2US_SECRET_HEX="$secret" \
+        STRA2US_SMOKE_APP="$SMOKE_DEVICE_APP" \
+        "$REPO_ROOT/tools/smoke_test_device.sh"
+    )
+}
+
+# v1.7.2 Sprint 6: standalone provisioning entry point. Useful for
+# re-seeding after a `tools/stage nuke` (filed for later) or rotating
+# the secret if it's suspected to have leaked.
+cmd_seed_smoke_device() {
+    require_env_file
+    local force=0
+    if [[ "${1:-}" == "--force" ]]; then
+        force=1
+        echo "→ --force: regenerating smoke-device secret"
+    else
+        echo "→ ensuring smoke-test device is provisioned (idempotent)"
+    fi
+    local secret
+    secret=$(_ensure_smoke_device "$force")
+    if [[ -z "$secret" ]]; then
+        die "failed to provision smoke device — see container logs"
+    fi
+    echo
+    echo "smoke device ready: client_id=${SMOKE_DEVICE_CLIENT_ID}, app=${SMOKE_DEVICE_APP}"
+    echo "(secret kept in Redis; not echoed. Run 'tools/stage smoke-device' to use.)"
 }
 
 cmd_smoke_prod() {
@@ -450,9 +616,11 @@ case "$1" in
     logs)          shift; cmd_logs "$@" ;;
     status)        shift; cmd_status "$@" ;;
     wait-tunnel)   shift; cmd_wait_tunnel "$@" ;;
-    smoke)         shift; cmd_smoke "$@" ;;
-    smoke-prod)    shift; cmd_smoke_prod "$@" ;;
-    seed-users)    shift; cmd_seed_users "$@" ;;
+    smoke)              shift; cmd_smoke "$@" ;;
+    smoke-device)       shift; cmd_smoke_device "$@" ;;
+    smoke-prod)         shift; cmd_smoke_prod "$@" ;;
+    seed-users)         shift; cmd_seed_users "$@" ;;
+    seed-smoke-device)  shift; cmd_seed_smoke_device "$@" ;;
     deploy)        shift; cmd_deploy "$@" ;;
     promote)       shift; cmd_promote "$@" ;;
     help|-h|--help) cmd_help ;;

@@ -622,6 +622,79 @@ def cmd_set(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_synth_traffic(args: argparse.Namespace) -> int:
+    """v1.7.2 Sprint 5: generate synthetic device traffic against
+    a target host for a fixed duration. Reuses the catalog-CLI's
+    HMAC + msgpack plumbing via the shared `Stra2usClient`. See
+    `tools/stra2us_cli/synth.py` for the action loop and the
+    `docs/roadmap.md` Sprint 5 section for the use-case framing.
+
+    Exit codes:
+      0 — completed cleanly (no errors during the run)
+      4 — completed with errors (some calls failed; total + last
+          error printed to stderr)
+    """
+    from .synth import (
+        DEFAULT_MAX_RATE_HZ,
+        SynthResult,
+        parse_duration,
+        run,
+    )
+
+    try:
+        duration_seconds = parse_duration(args.duration)
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+
+    try:
+        rate_hz = float(args.rate)
+    except (TypeError, ValueError):
+        print(f"error: --rate must be a number (got {args.rate!r})",
+              file=sys.stderr)
+        return 2
+
+    max_rate = (
+        float("inf") if args.allow_high_rate else DEFAULT_MAX_RATE_HZ
+    )
+
+    try:
+        client = _build_client(args)
+    except ConfigError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+
+    print(
+        f"synth-traffic: {args.mode} mode, "
+        f"{rate_hz:.2f} Hz × {duration_seconds:.0f}s "
+        f"= ~{int(rate_hz * duration_seconds)} calls "
+        f"against {client.base_url} as {client.client_id}",
+        file=sys.stderr,
+    )
+
+    try:
+        result = run(
+            client=client,
+            queue_topic=args.queue,
+            kv_key=args.kv_key,
+            duration_seconds=duration_seconds,
+            rate_hz=rate_hz,
+            mode=args.mode,
+            max_rate_hz=max_rate,
+            progress_stream=sys.stderr,
+        )
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+
+    print(result.summary_line())
+    if result.total_errors > 0:
+        if result.last_error:
+            print(f"  last error: {result.last_error}", file=sys.stderr)
+        return 4
+    return 0
+
+
 # ----- entrypoint -----
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -736,6 +809,59 @@ def _build_parser() -> argparse.ArgumentParser:
             "`stra2us put` if you need ad-hoc raw KV writes with --encrypted."
         ),
     )
+
+    # ----- synth-traffic (v1.7.2 Sprint 5) -----
+    sp_synth = sub.add_parser(
+        "synth-traffic",
+        help=(
+            "Generate synthetic signed device traffic against a target "
+            "host for a fixed duration. Useful for staging warm-up + "
+            "the device-flow smoke test."
+        ),
+    )
+    sp_synth.add_argument(
+        "--queue",
+        help=(
+            "Queue topic to POST to (e.g. critterchron/public/heartbeep). "
+            "Required for --mode q-only or --mode both."
+        ),
+    )
+    sp_synth.add_argument(
+        "--kv-key", dest="kv_key",
+        help=(
+            "KV key to PUT + GET each tick (e.g. critterchron/dev1/test). "
+            "Required for --mode kv-only or --mode both."
+        ),
+    )
+    sp_synth.add_argument(
+        "--duration", default="30s",
+        help="How long to run. Suffixes: s/m/h. Default: 30s.",
+    )
+    sp_synth.add_argument(
+        "--rate", default="1",
+        help=(
+            "Calls per second (Hz). Default: 1. Hard ceiling: 100 Hz "
+            "(use --allow-high-rate to override)."
+        ),
+    )
+    sp_synth.add_argument(
+        "--mode", default="both", choices=["q-only", "kv-only", "both"],
+        help=(
+            "What to exercise each tick: 'q-only' POSTs to the queue, "
+            "'kv-only' PUT-GET round-trips the KV key, 'both' does "
+            "both. Default: both."
+        ),
+    )
+    sp_synth.add_argument(
+        "--allow-high-rate",
+        dest="allow_high_rate",
+        action="store_true",
+        help=(
+            "Bypass the 100 Hz safety ceiling. Use only when you "
+            "intentionally want to stress-test."
+        ),
+    )
+
     return p
 
 
@@ -771,6 +897,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_delete(args)
         if args.verb == "set":
             return cmd_set(args)
+        if args.verb == "synth-traffic":
+            return cmd_synth_traffic(args)
     except CatalogError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
