@@ -2,7 +2,12 @@
 
 ## Near-term
 
-- **Generalize `widget: radio` to any enum-backed field.** Today
+- **Generalize `widget: radio` to any enum-backed field.**
+  *Scheduled as Sprint 1 of the v1.7.x roadmap; see
+  [`docs/roadmap.md`](docs/roadmap.md) for the engineering brief
+  (motivation, scope, files touched, verification path).*
+
+  Today
   `widget: radio` is gated by lint to `type: string` + `enum:` only;
   `type: int` + enum and `type: bool` (implicit `[true, false]`)
   both fall through to `<select>` with no radio option. The lint
@@ -68,49 +73,41 @@
   rather than silent data loss, and pursuing it would push
   toward the ETag/versioning territory we explicitly rejected.
 
-- **Surface the running release version in the admin UI.**
-  Today's "what's actually deployed?" answer requires SSHing
-  to the host and running `tools/stage status` (or
-  `git rev-parse --short HEAD` in `$PROD_DIR`). For routine
-  "did my deploy go?" / "is staging on v1.6.6 yet?" questions,
-  a visible version badge in the admin sidebar (or a small
-  status panel) closes the loop without leaving the browser.
-  This TODO was filed mid-debug after a missed deploy step
-  left staging on v1.6.5 while v1.6.6 instrumentation was
-  expected — a "Running: v1.6.5 (4b28654)" badge would have
-  caught it instantly.
+- ~~**Surface the running release version in the admin UI.**~~
+  Landed 2026-05-13 in v1.7.0. Source of truth is `backend/VERSION`
+  (one-line text file); backend reads via `core/version.py` with
+  a `"dev"` fallback when the file is missing. `GET /api/admin/release`
+  returns `{"version": "<tag>"}`; admin sidebar footer fetches on
+  page load and renders above the Sign Out link. Manual bump per
+  release for now — see follow-up TODO for the eventual
+  `tools/stage` automation.
 
-  Three implementation shapes to weigh:
-  1. **Build-time env var.** `tools/stage promote` and
-     `tools/stage deploy` pass `--build-arg RELEASE_TAG=<tag>`
-     (or `<commit>`); Dockerfile bakes it as `ENV
-     STRA2US_RELEASE=<value>`. Backend reads the env at
-     startup, exposes via a `/api/admin/release` endpoint.
-     Cleanest separation; survives container restarts;
-     doesn't depend on the runtime tree.
-  2. **Runtime git read.** Backend on startup runs
-     `git -C /app rev-parse --short HEAD` against the
-     bind-mounted `./backend`. Cheap (one syscall) but
-     requires the `.git` directory accessible inside the
-     container — the current volume mount may or may not
-     include it depending on `.dockerignore` shape.
-  3. **VERSION file.** `tools/stage` writes a one-line
-     `./backend/VERSION` file at deploy time; backend
-     reads it. Simplest; no Dockerfile changes; works
-     regardless of git/.dockerignore situation.
+- **Auto-write `backend/VERSION` from `tools/stage promote/deploy`.**
+  *Scheduled as Sprint 2 of the v1.7.x roadmap; see
+  [`docs/roadmap.md`](docs/roadmap.md) for the engineering brief.*
 
-  Recommendation: shape **#1** for production (env var is
-  the canonical "build artifact carries identity" pattern)
-  with shape **#3** as the staging fallback (since staging
-  rebuilds on every push and we want the SHA, not just the
-  tag). Render in admin sidebar footer near the Sign-out
-  link, with the format `v<X.Y.Z> (<short-sha>)` — clickable
-  to copy the full SHA, optional.
+  v1.7.0 shipped the runtime-side of the release-version display
+  but kept the file-bump manual. `tools/stage promote <tag>`
+  should write the tag verbatim to `$PROD_DIR/backend/VERSION`
+  before `docker compose build`; `tools/stage deploy <ref>`
+  should write a `<short-sha>-<branch>` shape (or just the ref)
+  to the staging clone's `backend/VERSION`. Backend reads it
+  unchanged via `core/version.py`. Net effect: the badge stays
+  current automatically; operators don't have to remember to
+  bump the file as part of each release commit (the same class
+  of footgun the cache-bust pre-commit hook addresses for
+  static-asset `?v=N`).
 
-  Small scope: ~30 lines backend + ~10 lines frontend +
-  build plumbing for #1. Pairs naturally with the cache-bust
-  automation TODO since both are "deploy hygiene"
-  improvements.
+  Implementation shape: ~20 lines of shell in `tools/stage`,
+  added to both `cmd_promote` and `cmd_deploy`. Could also add
+  a pre-commit hook entry to remind operators bumping the file
+  manually that they should commit it — though once the
+  automation is in place this becomes redundant.
+
+  Bonus: include the short SHA alongside the tag (e.g.
+  `v1.7.0 (4b28654)`) so the admin badge distinguishes
+  "v1.7.0 as tagged" from "v1.7.0-built-from-this-commit-which-
+  may-have-uncommitted-changes-or-be-mid-build."
 
 - **Extend v1.6.6 instrumentation to catch `HTTPException(500)` too.**
   v1.6.6's activity-log tagging works for raw exceptions
@@ -138,7 +135,20 @@
   `[HTTPException]`. Closes the instrumentation gap surfaced
   during v1.6.6 monitoring.
 
-- **[HIGH] Automate the `app.js?v=N` cache-bust.** Whenever
+- ~~**[HIGH] Automate the `app.js?v=N` cache-bust.**~~
+  Landed 2026-05-13 (v1.6.9). Pre-commit hook at `.githooks/pre-commit`
+  detects staged edits to static JS / CSS files and errors if the
+  matching `?v=N` line in the referrer HTML wasn't bumped. Five
+  source→referrer pairs covered (customer + admin surfaces); module
+  imports inside JS files (e.g. `touched_state.js?v=N` import inside
+  `app.js`) also covered. Operators install via
+  `git config core.hooksPath .githooks` (one-time per clone);
+  documented in `docs/release_cycle.md`'s "Pitfall 1" section.
+  Bypass available via `--no-verify` for genuine non-runtime edits.
+
+  *Original entry preserved below for history.*
+
+  Whenever
   `backend/src/static/app/app.js` changes, the `<script src=
   "/app/_static/app.js?v=N">` references in `device.html` and
   `landing.html` must be bumped to a new `N` — otherwise browsers
@@ -243,6 +253,11 @@
   observation, not a regression).
 
 - **Revisit backup/restore — provide a way to dump an entire app.**
+  *Scheduled as Sprint 7 of the v1.7.x roadmap; see
+  [`docs/roadmap.md`](docs/roadmap.md) for the engineering brief
+  (envelope schema decisions, restore semantics, sensitive-data
+  handling).*
+
   The existing `/api/admin/keys/backup` only exports client
   credentials (`client:<id>:secret` + `client:<id>:acl`). For the
   v1.5 prod cutover we had to migrate a lot more state by copying
@@ -353,7 +368,11 @@
   release has bandwidth for a focused half-day.
 
 - **Gate `/app/` landing form behind OAuth (close lookup_device
-  enumeration).** Today `/api/app/lookup_device` is intentionally
+  enumeration).**
+  *Scheduled as Sprint 3 of the v1.7.x roadmap; see
+  [`docs/roadmap.md`](docs/roadmap.md) for the engineering brief.*
+
+  Today `/api/app/lookup_device` is intentionally
   public — the customer-page landing form needs a name → app
   lookup *before* OAuth can gate the per-device page. An
   unauthenticated attacker can probe the endpoint and learn
@@ -637,7 +656,75 @@
   documented in `routes_device.py:22-26` (catalogs are exactly
   two segments; 3+ segments are asset payloads).
 
-- **Scoped admins can't see Activity Logs view.** A non-superuser
+- ~~**Activity Logs view: filter box for the `action` column.**~~
+  Landed 2026-05-13 (v1.6.9). Client-side substring filter (option #1
+  from the original entry). `<input id="logsActionFilter">` above
+  the table, case-insensitive substring match, live-render on every
+  keystroke. The `_logsCache` module-level variable holds the last
+  fetched batch so the filter narrows in-memory without re-hitting
+  `/api/admin/logs`. Server-side filter param (option #2) deferred
+  until someone hits the 2000-row in-memory limit in practice.
+
+  *Original entry preserved below for history.*
+
+  
+  Today the Activity Logs admin view (`/admin/#logs`) filters
+  only by `client_id` (multi-select chips). Operators looking
+  for "all `GET /kv/` calls" or "anything matching `wifi_password`"
+  have to eyeball the action column manually, which is brutal
+  on busy fleets where the table has hundreds of rows even after
+  `client_id` narrowing. Add a free-text filter box that narrows
+  the action column.
+
+  Implementation options:
+
+  1. **Client-side substring filter only.** Text input above the
+     table; JS filters rendered rows in real time, case-insensitive
+     substring match. No backend changes. Limitation: only filters
+     what's already been fetched (currently `?limit=2000` per
+     `fetchLogs` in `backend/src/static/app.js:1628`), so deep-
+     historical "find all 500s in the last week" searches would
+     miss anything older than the recent 2000 entries.
+
+  2. **Backend filter param + client-side narrow.** New
+     `action_substring=<X>` query param on `/api/admin/logs`
+     (`routes_admin.py:746` is the existing handler that does
+     `xrevrange` from the `system:activity_log` stream). Server
+     filters before returning, so the response is already narrow
+     and the client can paginate further if needed. Enables
+     searching the full 150k-entry stream. More implementation
+     work but better for forensic investigations.
+
+  3. **Both.** Client-side filter applied to fetched data;
+     server-side filter kicks in when the client filter would
+     return empty AND the user explicitly asks for "search older".
+
+  Recommendation: **start with #1** (10-line JS change in
+  `fetchLogs` + an `<input>` in `index.html`'s logs view). 80% of
+  use cases are recent-history triage and 2000 entries covers
+  that. File #2 as a follow-up if anyone hits the limit in
+  practice.
+
+  UX shape:
+  * Single text input above the logs table, near the existing
+    client_id chip filter
+  * Placeholder: `Filter actions… (e.g. /kv/, wifi_password, POST)`
+  * Case-insensitive substring match; live-filter as user types
+    (debounced ~100ms)
+  * Empty input = no filter (passthrough)
+  * Persists in URL hash or sessionStorage so a refresh doesn't
+    lose context (optional polish)
+
+  Touches: `backend/src/static/app.js:fetchLogs` (or a new
+  filter function), `backend/src/static/index.html` (the logs
+  view's filter row), `backend/src/static/styles.css` for the
+  filter-input look. No backend changes for #1.
+
+- **Scoped admins can't see Activity Logs view.**
+  *Scheduled as Sprint 4 of the v1.7.x roadmap; see
+  [`docs/roadmap.md`](docs/roadmap.md) for the engineering brief.*
+
+  A non-superuser
   admin (e.g. `austin`, ACL has `critterchron/...` prefixes but no
   `*:rw`) sees a blank Activity Logs page and no filter chips. Root
   cause: the page calls `/api/admin/keys` first to populate filter
@@ -679,7 +766,74 @@
   the trigger arrives — but build it then, not now, because the
   shape will be informed by the actual incompatibility.
 
-- **Synthetic device-traffic CLI for staging top-up.** A short-lived
+- **History export for `/q/<topic>` streams.** Today there's no
+  built-in way to dump a queue topic's history for a specific
+  device (or topic-wide). The operator's recourse is
+  `docker exec` into the container and run a Python one-liner
+  that opens Redis, calls `XRANGE q:<topic> - +`, filters by
+  the `client_id` field, msgpack-decodes the payload, and
+  prints. Works but a hassle, especially for non-trivial
+  analysis or routine archival.
+
+  Shape: new `stra2us history` subcommand on the existing CLI.
+  Sibling to the synth-traffic CLI below — same shape: reuses
+  the HMAC + msgpack plumbing in `tools/stra2us_cli/client.py`,
+  runs from the operator's machine, talks to a new admin
+  endpoint that proxies `XRANGE`. Rough shape:
+
+  ```bash
+  stra2us history <topic> \
+      [--device <client_id>] \
+      [--since <duration>] \
+      [--count <max-entries>] \
+      [--format json | jsonl | csv]
+  ```
+
+  Outputs one line per entry (default jsonl: `{"ts": ..., "id":
+  "...", "client_id": "...", "payload": <decoded>}`), oldest-first.
+  Pipes cleanly into `jq`, `csvkit`, etc.
+
+  Two implementation pieces:
+  1. **Admin endpoint** `GET /api/admin/history/q/<topic>`
+     with `?since=<duration>&device=<id>&count=<n>` query
+     params. Returns a streaming JSON-lines response (chunked)
+     so a multi-megabyte history doesn't buffer in memory.
+     Auth-gated like `/peek/q/` (admin queue:read on the
+     topic).
+  2. **CLI subcommand** wraps the endpoint, handles auth +
+     output formatting + the `--since "7d"` → unix-ms
+     conversion.
+
+  Built-in retention note: queue streams have a 7-day idle
+  TTL (`routes_device.py:212`) and no MAXLEN cap. So
+  "everything within the last 7 days of writes to this topic"
+  is the practical history window. If longer-term archival
+  matters, this CLI is the export hook into a downstream
+  store.
+
+  Use cases:
+  * Operator debugging a specific device's behavior over hours
+    or days
+  * Archival before a `tools/stage nuke` wipes staging
+  * Cross-environment data migration (export from staging,
+    import-via-stream-ID-replay to a fresh stack — though
+    msgpack-typed payloads might need extra handling)
+  * Bulk telemetry pull for external analysis
+
+  Pairs with the backup/restore roadmap sprint (Sprint 5,
+  `docs/roadmap.md`) — that sprint handles point-in-time state
+  dumps; this TODO handles time-series queue archival. Different
+  data shapes; complementary tooling.
+
+  Scope: ~50 lines backend (endpoint), ~80 lines CLI, ~80 lines
+  tests. Half-day of focused work.
+
+- **Synthetic device-traffic CLI for staging top-up.**
+  *Scheduled as Sprint 5 of the v1.7.x roadmap; see
+  [`docs/roadmap.md`](docs/roadmap.md) for the engineering brief
+  (CLI shape, rate-limit safety, mode flags).*
+
+  A short-lived
   job that posts signed device traffic to a target host for a
   configured duration. Built as a subcommand of the existing
   `tools/stra2us_cli` Python client (which already has HMAC signing,
