@@ -20,9 +20,21 @@ from api.dependencies import (
 )
 from core.admin_auth import HTPASSWD_FILE, is_rescue_on_default
 from core.perf_log import PerfPhases, PERF_LOG_STREAM
+from core.version import get_release_version
 import os
 
 router = APIRouter()
+
+
+# v1.7.0: surface the running release tag to the admin UI. The
+# admin's sidebar footer fetches this on page load and displays
+# the result alongside the Sign Out link. Public to any authed
+# admin — the version string is not sensitive. Source of truth
+# is `backend/VERSION` (a one-line file bumped per release; see
+# `core/version.py`).
+@router.get("/release")
+async def get_release(_: dict = Depends(get_admin_context)):
+    return {"version": get_release_version()}
 
 # Client IDs we refuse to mint, because they collide with sub-namespaces
 # under each `<app>/`. See "Reserved-name enforcement" in
@@ -81,6 +93,63 @@ class ClientBackupEntry(BaseModel):
 class BackupPayload(BaseModel):
     exported_at: int
     clients: List[ClientBackupEntry]
+
+# v1.7.1 Sprint 4: scope-aware companion to /keys. Returns just the
+# client_ids the caller has ACL coverage for (no secrets, no ACL
+# bodies). The Activity Logs view in the admin UI uses this to
+# populate filter chips for scoped (non-superuser) admins — pre-
+# v1.7.1 it called /keys, which is superuser-only, so a scoped
+# admin opening the Activity Logs page got 403 → blank view +
+# no chips. The scope-aware shape lets every admin see the chips
+# for clients they can actually filter activity on.
+#
+# `/keys` stays superuser-locked since it returns secrets + ACL
+# bodies — that surface is tied to the client-management UI that
+# scoped admins shouldn't reach.
+@router.get("/visible_clients")
+async def list_visible_clients(ctx: dict = Depends(get_admin_context)):
+    redis = get_redis_client()
+    caller_perms = ctx["acl"].get("permissions", [])
+    if not caller_perms:
+        # No permissions at all (e.g. a misconfigured admin row) →
+        # see nothing. Empty list, not 403 — the page renders
+        # without filter chips, same as the network-failure path.
+        return []
+
+    keys = await redis.keys("client:*:secret")
+    visible: list[str] = []
+    for k in keys:
+        if isinstance(k, bytes):
+            k = k.decode("utf-8")
+        client_id = k.split(":")[1]
+        acl_raw = await redis.get(f"client:{client_id}:acl")
+        if not acl_raw:
+            continue
+        try:
+            client_acl = json.loads(acl_raw)
+        except Exception:
+            continue
+        # Device-shaped clients: visible if any caller perm covers
+        # `<app>/<client_id>`. Internal probes / custom-ACL clients
+        # without the device shape are visible only to wildcards.
+        app = _device_app_for_client(client_acl, client_id)
+        if app is not None:
+            path = f"{app}/{client_id}"
+            if any(_prefix_matches(p.get("prefix", ""), path)
+                   for p in caller_perms):
+                visible.append(client_id)
+        else:
+            # Non-device-shaped client: only wildcard ACLs see them.
+            # The `_prefix_matches` predicate naturally handles `*`,
+            # so this is just "does the caller have anything that
+            # matches the bare client_id." In practice this catches
+            # internal probes (smoke-test client, etc.) for superuser
+            # callers without leaking them to scoped admins.
+            if any(_prefix_matches(p.get("prefix", ""), client_id)
+                   for p in caller_perms):
+                visible.append(client_id)
+    return sorted(visible)
+
 
 @router.get("/keys")
 async def list_keys(_: dict = Depends(require_admin_superuser)):

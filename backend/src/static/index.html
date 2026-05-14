@@ -11,7 +11,7 @@
          require allowlisting in `style-src` + `font-src` once
          admin flips to enforcing CSP (P5 followup #1d). -->
     <link rel="stylesheet" href="_vendor/inter/inter.css?v=1">
-    <link rel="stylesheet" href="styles.css?v=2">
+    <link rel="stylesheet" href="styles.css?v=3">
 </head>
 <body>
     <!-- Security warnings banner — populated by app.js on load.
@@ -44,6 +44,12 @@
                  returning 401 with a different realm. No data-target,
                  so the in-page nav handler ignores it. -->
             <div class="sidebar-footer">
+                <!-- Running release tag (v1.7.0+). Populated by app.js on
+                     page load via GET /api/admin/release, whose source
+                     of truth is backend/VERSION. Renders as "dev" when
+                     the VERSION file is missing (local checkouts that
+                     haven't been deployed). -->
+                <div id="adminVersionBadge" class="sidebar-version" title="Running release"></div>
                 <a href="/admin/logout" class="sidebar-signout">Sign out</a>
             </div>
         </nav>
@@ -418,6 +424,18 @@
                 
                 <div id="logFilterChips" class="filter-chips"></div>
 
+                <!-- Action filter: client-side substring match against
+                     each row's action column. Filters whatever the
+                     last /logs fetch returned (currently ~2000
+                     entries); for deeper-historical searches a server-
+                     side filter param could be added. -->
+                <div class="logs-action-filter-row">
+                    <input type="search" id="logsActionFilter"
+                           class="logs-action-filter"
+                           placeholder="Filter actions… (e.g. /kv/, wifi_password, POST)"
+                           autocomplete="off">
+                </div>
+
                 <div class="card log-card glass-panel">
                     <table class="data-table">
                         <thead>
@@ -476,6 +494,6 @@
          from under us. To rev: replace the file in _vendor/ + bump
          the ?v= cache-buster. -->
     <script src="_vendor/js-yaml-4.1.0.min.js"></script>
-    <script src="app.js?v=18"></script>
+    <script src="app.js?v=21"></script>
 </body>
 </html>

@@ -1592,13 +1592,40 @@ async function unsetScope(scope) {
 
 // 3. Activity Logs
 let logFilterClients = new Set();
+// Cached log entries from the last /logs fetch. fetchLogs() stores
+// here, renderLogs() reads + applies client-side filters. Lets the
+// action-filter input narrow live without re-hitting the network
+// per keystroke.
+let _logsCache = [];
+// Free-text substring filter on the `action` column. Case-
+// insensitive; empty = passthrough. Bound to #logsActionFilter's
+// `input` event in initLogsActionFilter().
+let logFilterAction = "";
 let logKnownClients = [];
 let logClientsLoaded = false;
 
 async function loadLogClients() {
     if (logClientsLoaded) return;
-    const { data: clients } = await fetchAPI('/keys');
-    logKnownClients = clients.map(c => c.client_id).sort();
+    // v1.7.1 Sprint 4: use the scope-aware /visible_clients
+    // endpoint instead of the superuser-only /keys. Pre-v1.7.1 a
+    // scoped admin opening the Activity Logs view got 403 → JS
+    // error → blank page with no chips. Now /visible_clients
+    // returns just the client_ids the caller has ACL coverage
+    // for, every admin (including superuser) gets the right
+    // chip set.
+    //
+    // Defensive against any failure: if the endpoint 403s, 500s,
+    // or returns an unexpected shape, render the logs view
+    // without chips rather than blowing up. The logs themselves
+    // are scope-filtered server-side by the /logs handler, so
+    // an authed-but-unscoped admin sees an empty filter strip +
+    // empty log list, not a broken page.
+    const { ok, data: clients } = await fetchAPI('/visible_clients');
+    if (ok && Array.isArray(clients)) {
+        logKnownClients = clients.slice().sort();
+    } else {
+        logKnownClients = [];
+    }
     logClientsLoaded = true;
     renderLogChips();
 }
@@ -1638,8 +1665,22 @@ async function fetchLogs() {
         endpoint += `&client_id=${encodeURIComponent(id)}`;
     }
     const { data: logs } = await fetchAPI(endpoint);
+    _logsCache = Array.isArray(logs) ? logs : [];
+    renderLogs();
+}
+
+// Render `_logsCache` to the table, applying `logFilterAction` as a
+// case-insensitive substring filter against each row's action column.
+// Split from fetchLogs so the action-filter input can re-render
+// live without re-hitting the network.
+function renderLogs() {
     const tbody = document.getElementById('logsTableBody');
-    tbody.innerHTML = logs.map(l => `
+    if (!tbody) return;
+    const needle = logFilterAction.trim().toLowerCase();
+    const rows = needle
+        ? _logsCache.filter(l => (l.action || '').toLowerCase().includes(needle))
+        : _logsCache;
+    tbody.innerHTML = rows.map(l => `
         <tr>
             <td class="col-log-timestamp">${formatTime(l.timestamp)}</td>
             <td class="col-log-client-id">${escapeHtml(l.client_id)}</td>
@@ -1647,6 +1688,19 @@ async function fetchLogs() {
             <td class="${_logStatusClass(l.status)}">${escapeHtml(l.status)}</td>
         </tr>
     `).join('');
+}
+
+// Bind the action-filter input. Called once at page-load (the
+// element is server-rendered in index.html). Input event updates
+// `logFilterAction` and re-renders; no debounce since the filter
+// runs over an in-memory ~2000-row array — well under a millisecond.
+function initLogsActionFilter() {
+    const input = document.getElementById('logsActionFilter');
+    if (!input) return;
+    input.addEventListener('input', () => {
+        logFilterAction = input.value;
+        renderLogs();
+    });
 }
 
 // Color-class logic for activity log status text. Was a
@@ -2130,9 +2184,29 @@ function _dispatchChange(event) {
 document.addEventListener('DOMContentLoaded', () => {
     document.body.addEventListener('click', _dispatchClick);
     document.body.addEventListener('change', _dispatchChange);
+    initLogsActionFilter();
 });
+
+// v1.7.0: fetch the running release tag and display it in the
+// sidebar footer. Source of truth is `backend/VERSION` (read
+// server-side via `core/version.py`); shown alongside the
+// Sign Out link so an operator can confirm "did my deploy go?"
+// without leaving the browser. Fails silently — a missing badge
+// is less disruptive than an error banner for a cosmetic feature.
+async function fetchAndRenderReleaseVersion() {
+    const badge = document.getElementById('adminVersionBadge');
+    if (!badge) return;
+    try {
+        const { ok, data } = await fetchAPI('/release');
+        if (!ok || !data || !data.version) return;
+        badge.innerText = data.version;
+    } catch (e) {
+        // Network failure — leave the badge empty. No error toast.
+    }
+}
 
 // Init
 applyWhoami();
 fetchStats();
 fetchSecurityWarnings();
+fetchAndRenderReleaseVersion();
