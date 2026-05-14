@@ -1806,8 +1806,18 @@ let monitorClientsLoaded = false;
 
 async function loadMonitorClients() {
     if (monitorClientsLoaded) return;
-    const { data: clients } = await fetchAPI('/keys');
-    monitorKnownClients = clients.map(c => c.client_id).sort();
+    // v1.7.1 Sprint 4 (addendum): same /keys → /visible_clients swap
+    // as loadLogClients above. Pre-v1.7.1 a scoped admin opening the
+    // Topic Monitor view got 403 → JS error → no filter chips. Now
+    // the scope-aware endpoint returns just the visible client_ids.
+    // Defensive against any failure: empty array → render without
+    // chips rather than blow up.
+    const { ok, data: clients } = await fetchAPI('/visible_clients');
+    if (ok && Array.isArray(clients)) {
+        monitorKnownClients = clients.slice().sort();
+    } else {
+        monitorKnownClients = [];
+    }
     monitorClientsLoaded = true;
     renderMonitorChips();
 }
