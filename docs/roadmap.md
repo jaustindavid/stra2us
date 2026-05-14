@@ -71,7 +71,11 @@ signal "real new capability."
 
 ---
 
-## Sprint 1 — Generalize `widget: radio` to any enum-backed field
+## ~~Sprint 1 — Generalize `widget: radio` to any enum-backed field~~
+
+**Landed 2026-05-13 in v1.7.1.** Dispatch in `widget_renderer.py`
+covers int+enum, float+enum, and bool (synthetic `[true, false]`);
+`catalog_lint.py` relaxed accordingly.
 
 **Target release:** v1.7.1 (bundled with Sprints 2, 3, 4)
 
@@ -157,7 +161,12 @@ None.
 
 ---
 
-## Sprint 2 — Auto-write `backend/VERSION` from `tools/stage`
+## ~~Sprint 2 — Auto-write `backend/VERSION` from `tools/stage`~~
+
+**Landed 2026-05-13 in v1.7.1.** `_write_version_file` helper in
+`tools/stage`; called from both `cmd_deploy` and `cmd_promote`
+after the `git checkout` step. `backend/VERSION` now defaults to
+`dev` so a fresh tree is identifiable.
 
 **Target release:** v1.7.1 (bundled with Sprints 1, 3, 4)
 
@@ -270,7 +279,13 @@ None. The runtime-side already exists from v1.7.0.
 
 ---
 
-## Sprint 3 — Gate `/app/` landing form behind OAuth
+## ~~Sprint 3 — Gate `/app/` landing form behind OAuth~~
+
+**Landed 2026-05-13 in v1.7.1.** `_path_needs_admin_auth` in
+`main.py` lost its `/app/` and `/api/app/lookup_device` carve-outs;
+both now require admin auth. New 18-test
+`backend/tests/test_auth_path_gating.py` pins the new + preserved
+behaviors.
 
 **Target release:** v1.7.1 (bundled with Sprints 1, 2, 4)
 
@@ -369,7 +384,13 @@ None.
 
 ---
 
-## Sprint 4 — Scoped admins see Activity Logs
+## ~~Sprint 4 — Scoped admins see Activity Logs~~
+
+**Landed 2026-05-13 in v1.7.1.** New
+`GET /api/admin/visible_clients` (scope-aware client list); `app.js`
+swapped `loadLogClients` *and* `loadMonitorClients` (addendum after
+the first staging run) to consume it instead of the wildcard `/keys`.
+6 new tests in `backend/tests/test_visible_clients.py`.
 
 **Target release:** v1.7.1 (bundled with Sprints 1, 2, 3)
 
@@ -448,7 +469,17 @@ ACL scan, which is also fine just slower.
 
 ---
 
-## Sprint 5 — Synthetic device-traffic CLI
+## ~~Sprint 5 — Synthetic device-traffic CLI~~
+
+**Landed 2026-05-14 in v1.7.2.** `stra2us synth-traffic` subcommand
++ `tools/stra2us_cli/synth.py` action loop (q-only / kv-only / both
+modes, rate ceiling at 100 Hz with `--allow-high-rate` bypass,
+deadline-aware pacing). New `post_queue()` on `Stra2usClient`. 16
+new tests in `tools/tests/test_synth_traffic.py`. Caught + fixed
+during Sprint 6 bring-up: kv-PUT errors used to `continue` and
+bypass the per-tick pacer — a fast-failing PUT could drive a "1 Hz"
+loop at ~4000 Hz. Refactored to a `put_ok` flag + nested GET;
+pinned with `test_run_kv_put_failure_does_not_bypass_pacer`.
 
 **Target release:** v1.7.2 (bundled with Sprint 6, which depends on this)
 
@@ -536,7 +567,17 @@ None.
 
 ---
 
-## Sprint 6 — Beefier smoke test (device flows)
+## ~~Sprint 6 — Beefier smoke test (device flows)~~
+
+**Landed 2026-05-14 in v1.7.2.** `tools/smoke_test_device.sh` drives
+the synth-traffic CLI against staging and reports in the same
+PASS/FAIL shape as `smoke_test.sh`. New `tools/stage smoke-device`
+and `seed-smoke-device` subcommands; `tools/stage smoke` runs the
+device-flow checks too (skippable with `--skip-device-flow`).
+Smoke device `smoke-test-device` on app `_smoke`
+(`_smoke/<id>:rw` + `_smoke/public:rw` ACL). Verified end-to-end
+on staging: signed queue POSTs, KV PUTs, and KV GETs with
+round-trip equality all green.
 
 **Target release:** v1.7.2 (bundled with Sprint 5, on which this depends)
 

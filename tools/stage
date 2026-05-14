@@ -464,7 +464,13 @@ cmd_promote() {
     tag_commit=$(git -C "$PROD_DIR" rev-parse "$tag^{commit}")
     if [[ -n "$staging_head" && "$staging_head" != "$tag_commit" ]]; then
         echo
-        echo "WARNING: tag $tag (commit $(git -C "$PROD_DIR" rev-parse --short "$tag"))"
+        # Display the dereferenced commit SHA, not the annotated-tag
+        # object SHA. `git rev-parse --short "$tag"` on an annotated
+        # tag returns the tag object's hash (e.g. b1c1e3e), which
+        # doesn't correspond to any commit and makes the warning
+        # look like a phantom commit. `^{commit}` resolves to the
+        # actual commit the tag points at.
+        echo "WARNING: tag $tag (commit $(git -C "$PROD_DIR" rev-parse --short "$tag^{commit}"))"
         echo "         does not match staging-current ($(git -C "$REPO_ROOT" rev-parse --short staging-current))."
         echo "         You may be promoting code that wasn't verified on staging."
         if [[ "${2:-}" != "--yes" ]]; then

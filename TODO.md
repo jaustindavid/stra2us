@@ -828,27 +828,14 @@
   Scope: ~50 lines backend (endpoint), ~80 lines CLI, ~80 lines
   tests. Half-day of focused work.
 
-- **Synthetic device-traffic CLI for staging top-up.**
-  *Scheduled as Sprint 5 of the v1.7.x roadmap; see
-  [`docs/roadmap.md`](docs/roadmap.md) for the engineering brief
-  (CLI shape, rate-limit safety, mode flags).*
-
-  A short-lived
-  job that posts signed device traffic to a target host for a
-  configured duration. Built as a subcommand of the existing
-  `tools/stra2us_cli` Python client (which already has HMAC signing,
-  msgpack body construction, and the wire format implemented). Rough
-  shape: `stra2us synth-traffic --target iot-staging.stra2us.austindavid.com:8253
-  --client-id staging-probe --duration 5m --rate 2Hz`. Reads the
-  client's HMAC secret from a flag or `~/.stra2us/credentials`.
-  Runs to completion, prints summary stats. Use cases: kicking off
-  device traffic before a staging smoke run when no real LAN device
-  is heartbeating, generating load for testing, validating a
-  device-path code change without rebooting a real device.
-  Complements the LAN-only real staging devices (which are the
-  primary traffic source); this is the on-demand top-up. See
-  [`docs/staging_environment.md`](docs/staging_environment.md)
-  for surrounding context.
+- ~~**Synthetic device-traffic CLI for staging top-up.**~~
+  Landed 2026-05-14 in v1.7.2 (Sprint 5). `stra2us synth-traffic`
+  subcommand + `tools/stra2us_cli/synth.py` action loop. Three
+  modes (q-only / kv-only / both); rate ceiling at 100 Hz with
+  `--allow-high-rate` bypass; deadline-aware pacing that holds
+  under error storms (regression-tested after a bug caught
+  during Sprint 6 bring-up). Sprint 6's `tools/smoke_test_device.sh`
+  is the first consumer.
 
 - ~~**Build a staging environment.**~~ Landed 2026-05-06 as Phase
   4.5 of the v1.5 rollout (see `docs/staging_environment.md` and
