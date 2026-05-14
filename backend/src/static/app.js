@@ -31,6 +31,10 @@ document.querySelectorAll('.nav-links a').forEach(link => {
         if (targetId === 'admin_users') fetchAdminUsers();
         if (targetId === 'catalogs') { closeCatalogDetail(); fetchCatalogList(); }
         if (targetId === 'logs') { logClientsLoaded = false; fetchLogs(); }
+        // v1.8.1: re-load the per-app dump list on every entry into
+        // the Backup view. Catalogs might have been published since
+        // the last visit; cheap to refetch.
+        if (targetId === 'backup') loadPerAppBackupList();
     });
 });
 
@@ -1731,20 +1735,128 @@ setInterval(() => {
     if (activeViewId === 'logs') fetchLogs();
 }, 5000);
 
-// 4. Backup / Restore
+// 4. Backup / Restore — v1.8.0/v1.8.1.
+//
+// The pre-v1.8.0 implementation called /keys/backup (clients only).
+// This rewrites against the v1.8.0 envelope endpoints which cover
+// the full Redis surface (clients + admin_acls + KV + queues +
+// catalogs + assets + device_to_app + optional activity log) and
+// support a per-app slice. Restore auto-detects `dump_kind` from the
+// uploaded file so one button handles both whole + per-app dumps.
+//
+// /keys/backup and /keys/restore stay on the backend for operator
+// scripts that hit them directly; the UI no longer calls them.
+
+// ----- whole-instance dump -----
 async function downloadBackup() {
-    const res = await fetch(`${API_BASE}/keys/backup`);
+    const includeLogs = document.getElementById('backupIncludeLogs').checked;
+    const url = `${API_BASE}/backup${includeLogs ? '?include_logs=1' : ''}`;
+    await _downloadDumpAt(url, 'stra2us_backup_whole.json');
+}
+
+// ----- per-app dump (one per app, hung off the published catalogs) -----
+async function downloadAppBackup(app) {
+    const includeLogs = document.getElementById('perAppIncludeLogs').checked;
+    const url = `${API_BASE}/backup/app/${encodeURIComponent(app)}` +
+        (includeLogs ? '?include_logs=1' : '');
+    await _downloadDumpAt(url, `stra2us_backup_${app}.json`);
+}
+
+// Shared download helper. The server sets Content-Disposition with
+// a timestamped filename, but `fetch` + `URL.createObjectURL` ignores
+// it — we honor it manually by parsing the header (when present) and
+// falling back to the caller's suggested name.
+async function _downloadDumpAt(url, fallbackName) {
+    const res = await fetch(url);
     if (!res.ok) {
-        alert('Backup failed. Check the server logs.');
+        alert(`Dump failed: HTTP ${res.status}. See server logs.`);
         return;
     }
+    const cd = res.headers.get('Content-Disposition') || '';
+    const m = cd.match(/filename=([^;]+)/i);
+    const filename = m ? m[1].trim().replace(/^["']|["']$/g, '') : fallbackName;
     const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
+    const blobUrl = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url;
-    a.download = 'stra2us_backup.json';
+    a.href = blobUrl;
+    a.download = filename;
     a.click();
-    URL.revokeObjectURL(url);
+    URL.revokeObjectURL(blobUrl);
+}
+
+// Populate the per-app dump list. Apps come from the same source the
+// Catalogs view uses — `kv_scan?prefix=_catalog/`, filtered to bare
+// `_catalog/<app>` keys. If no catalogs are published, this section
+// shows a hint rather than rendering empty.
+async function loadPerAppBackupList() {
+    const listEl = document.getElementById('perAppBackupList');
+    if (!listEl) return;
+    const { ok, data } = await fetchAPI(
+        `/kv_scan?prefix=${encodeURIComponent(CATALOG_PREFIX)}`
+    );
+    if (!ok) {
+        listEl.innerHTML =
+            '<span class="text-muted">Could not load app list (need superuser).</span>';
+        return;
+    }
+    const rawItems = Array.isArray(data.items) ? data.items : [];
+    const apps = rawItems
+        .map(it => it.key.startsWith(CATALOG_PREFIX) ? it.key.slice(CATALOG_PREFIX.length) : it.key)
+        .filter(tail => tail && !tail.includes('/'));
+    if (apps.length === 0) {
+        listEl.innerHTML =
+            '<span class="text-muted">No published catalogs yet &mdash; per-app dumps need at least one app.</span>';
+        return;
+    }
+    apps.sort();
+    listEl.innerHTML = apps.map(app => `
+        <div class="per-app-backup-row">
+            <code>${escapeHtml(app)}</code>
+            <button class="btn-sm" data-action="downloadAppBackup" data-app="${escapeHtml(app)}">
+                &#8659; Download <code>${escapeHtml(app)}</code>
+            </button>
+        </div>
+    `).join('');
+}
+
+// ----- restore (auto-detects whole vs per-app from envelope) -----
+
+// File-picker preview: show what the uploaded dump claims to be
+// (version, kind, scope, exported timestamp) before the operator
+// commits to restoring. A `change` listener wires this up at boot.
+async function _refreshRestorePreview() {
+    const fileInput = document.getElementById('restoreFile');
+    const previewEl = document.getElementById('restorePreview');
+    if (!fileInput || !previewEl) return;
+    if (!fileInput.files.length) {
+        previewEl.classList.add('hidden');
+        previewEl.innerText = '';
+        return;
+    }
+    let envelope;
+    try {
+        envelope = JSON.parse(await fileInput.files[0].text());
+    } catch (e) {
+        previewEl.classList.remove('hidden');
+        previewEl.innerHTML =
+            '<span class="text-error">&#10060; Not valid JSON.</span>';
+        return;
+    }
+    const v = envelope.stra2us_backup_version;
+    const kind = envelope.dump_kind;
+    const app = envelope.app;
+    const ts = envelope.exported_at || '(no timestamp)';
+    if (v !== 1) {
+        previewEl.classList.remove('hidden');
+        previewEl.innerHTML = `<span class="text-error">&#10060; Unsupported envelope version ${escapeHtml(String(v))}; this server understands v1.</span>`;
+        return;
+    }
+    const scope = (kind === 'per-app')
+        ? `per-app: <code>${escapeHtml(app || '?')}</code>`
+        : 'whole-instance';
+    previewEl.classList.remove('hidden');
+    previewEl.innerHTML =
+        `Detected: <strong>${scope}</strong> dump from <code>${escapeHtml(ts)}</code>.`;
 }
 
 async function uploadRestore() {
@@ -1753,34 +1865,96 @@ async function uploadRestore() {
     const resultDiv = document.getElementById('restoreResult');
 
     if (!fileInput.files.length) {
-        alert('Please select a backup file first.');
+        alert('Please select a dump file first.');
         return;
     }
 
-    const text = await fileInput.files[0].text();
-    let payload;
+    let envelope;
     try {
-        payload = JSON.parse(text);
+        envelope = JSON.parse(await fileInput.files[0].text());
     } catch (e) {
-        alert('Invalid JSON file. Please select a valid backup.');
+        alert('Invalid JSON file. Please select a valid dump.');
         return;
     }
 
-    const res = await fetch(`${API_BASE}/keys/restore?force=${force}`, {
+    // Route by dump_kind. Per-app dumps go to /restore/app/<app>;
+    // the backend's defense-in-depth enforces app scope regardless of
+    // what the envelope claims (see fr_backup_envelope_v1.md).
+    let url;
+    if (envelope.dump_kind === 'per-app') {
+        if (!envelope.app) {
+            alert('Per-app dump is missing an `app` field. Cannot restore.');
+            return;
+        }
+        if (!confirm(
+            `Restore per-app dump for "${envelope.app}"?\n\n` +
+            `This will write back the app's clients, KV, queues, and admin grants. ` +
+            (force ? 'Existing values WILL be replaced (force overwrite).'
+                   : 'Existing values will be skipped.')
+        )) return;
+        url = `${API_BASE}/restore/app/${encodeURIComponent(envelope.app)}?force_overwrite=${force ? 1 : 0}`;
+    } else {
+        if (!confirm(
+            'Restore whole-instance dump?\n\n' +
+            'This will write back every load-bearing key. ' +
+            (force ? 'Existing values WILL be replaced (force overwrite).'
+                   : 'Existing values will be skipped.')
+        )) return;
+        url = `${API_BASE}/restore?force_overwrite=${force ? 1 : 0}`;
+    }
+
+    const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(envelope),
     });
-
     const data = await res.json();
+    if (!res.ok) {
+        resultDiv.classList.remove('hidden');
+        resultDiv.innerHTML =
+            `<span class="text-error">&#10060; Restore failed (HTTP ${res.status}): ${escapeHtml(data.detail || JSON.stringify(data))}</span>`;
+        return;
+    }
     resultDiv.classList.remove('hidden');
-    resultDiv.innerHTML = `
-        <strong>Restore complete!</strong><br><br>
-        ✅ Restored: <strong>${data.restored.length}</strong> clients<br>
-        ⏭ Skipped (already exist): <strong>${data.skipped.length}</strong> clients<br>
-        ♻️ Overwritten: <strong>${data.overwritten.length}</strong> clients
-        ${data.restored.length ? `<br><br><small>New: ${data.restored.join(', ')}</small>` : ''}
-        ${data.overwritten.length ? `<br><small>Overwritten: ${data.overwritten.join(', ')}</small>` : ''}
+    resultDiv.innerHTML = _formatRestoreResult(data);
+}
+
+// Renders the per-section count table from the /restore response
+// (see services/backup_io.py:apply_envelope for the shape).
+function _formatRestoreResult(data) {
+    const sections = ['clients', 'admin_acls', 'kv', 'queues', 'device_to_app'];
+    const rows = sections.map(s => {
+        const r = data[s] || {restored: [], skipped: [], overwritten: []};
+        return `<tr>
+            <td><code>${s}</code></td>
+            <td class="text-right">${r.restored.length}</td>
+            <td class="text-right">${r.skipped.length}</td>
+            <td class="text-right">${r.overwritten.length}</td>
+        </tr>`;
+    }).join('');
+    const log = data.activity_log || {restored: 0, skipped: false, overwritten: false};
+    const logRow = `<tr>
+        <td><code>activity_log</code></td>
+        <td class="text-right">${log.restored}</td>
+        <td class="text-right">${log.skipped ? 'yes' : 'no'}</td>
+        <td class="text-right">${log.overwritten ? 'yes' : 'no'}</td>
+    </tr>`;
+    const rejected = data.rejected_outside_app_filter || [];
+    const rejectedBlock = rejected.length === 0 ? '' : `
+        <p class="form-hint mt-sm"><strong>Rejected outside app filter:</strong>
+        ${rejected.length} key${rejected.length === 1 ? '' : 's'} (defense-in-depth refused to write keys outside the URL&rsquo;s app scope).</p>
+        <details class="form-hint"><summary>Show rejected keys</summary><pre>${escapeHtml(rejected.join('\n'))}</pre></details>
+    `;
+    return `
+        <strong>&#9989; Restore complete.</strong>
+        <table class="data-table mt-sm">
+            <thead><tr>
+                <th>Section</th><th class="text-right">Restored</th>
+                <th class="text-right">Skipped</th><th class="text-right">Overwritten</th>
+            </tr></thead>
+            <tbody>${rows}${logRow}</tbody>
+        </table>
+        ${rejectedBlock}
     `;
 }
 
@@ -2158,8 +2332,9 @@ const ACTIONS = {
     monitorStop: () => monitorStop(),
     monitorClear: () => monitorClear(),
 
-    // Backup / restore
+    // Backup / restore (v1.8.0 + v1.8.1 UI)
     downloadBackup: () => downloadBackup(),
+    downloadAppBackup: (el) => downloadAppBackup(el.dataset.app),
     uploadRestore: () => uploadRestore(),
 };
 
@@ -2195,6 +2370,14 @@ document.addEventListener('DOMContentLoaded', () => {
     document.body.addEventListener('click', _dispatchClick);
     document.body.addEventListener('change', _dispatchChange);
     initLogsActionFilter();
+    // v1.8.1: restore-file preview. Wired here (not in the
+    // _dispatchChange map) because it's a plain inline preview, not
+    // an action-triggering toggle — keeps the data-change-action
+    // surface narrow.
+    const restoreFile = document.getElementById('restoreFile');
+    if (restoreFile) {
+        restoreFile.addEventListener('change', _refreshRestorePreview);
+    }
 });
 
 // v1.7.0: fetch the running release tag and display it in the

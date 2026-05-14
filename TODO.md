@@ -252,32 +252,28 @@
   informationally without asserting the contents (deployment-state
   observation, not a regression).
 
-- **Revisit backup/restore — provide a way to dump an entire app.**
-  *Scheduled as Sprint 7 of the v1.7.x roadmap; see
-  [`docs/roadmap.md`](docs/roadmap.md) for the engineering brief
-  (envelope schema decisions, restore semantics, sensitive-data
-  handling).*
+- ~~**Revisit backup/restore — provide a way to dump an entire app.**~~
+  Landed 2026-05-14 in v1.8.0 (Sprint 7). `GET /api/admin/backup`
+  (whole-instance) and `GET /api/admin/backup/app/<app>` (per-app);
+  `POST /api/admin/restore` and `POST /api/admin/restore/app/<app>`
+  with `?force_overwrite=1`. Envelope: versioned JSON, base64-msgpack
+  for binary values; full schema in
+  [`docs/fr_backup_envelope_v1.md`](docs/fr_backup_envelope_v1.md).
+  Per-app restore is sandboxed — keys outside `<app>/...` or
+  `_catalog/<app>` get rejected even if the envelope claims
+  otherwise (defense in depth). Activity log opt-in via
+  `?include_logs=1`. Sensitive-data warnings: `X-Stra2us-Sensitive: true`
+  header + `Cache-Control: no-store` on every dump response.
 
-  The existing `/api/admin/keys/backup` only exports client
-  credentials (`client:<id>:secret` + `client:<id>:acl`). For the
-  v1.5 prod cutover we had to migrate a lot more state by copying
-  the Redis data dir wholesale: `admin_acls:*` rows (admin user
-  ACLs), KV data including `<app>/<resource>` and the new
-  KV-stored firmware blobs, queue contents, activity log, catalogs
-  (`_catalog/<app>/...`). A `cp -a redis_data/` works for a same-
-  host migration but not for cross-host moves or per-app exports.
-  Two complementary needs:
-  1. **Whole-instance dump** — extends the existing backup to cover
-     all of the above, suitable for full-server migrations or
-     periodic offline backups. Format: JSON or msgpack envelope.
-  2. **Per-app dump** — given an app name (e.g. `critterchron`),
-     export all its clients + ACLs + KV data + catalog + queues
-     (or selected subsets). Useful for cloning an app environment,
-     onboarding a new instance, or surgical restores.
-  Both should also support **restore** with at least the existing
-  "skip-existing / force-overwrite" semantics. Sensitive data
-  (HMAC secrets, OAuth tokens) keeps the existing "treat like a
-  password manager export" warnings.
+- ~~**Admin UI for backup/restore.**~~ Landed 2026-05-14 in v1.8.1
+  (bundled into the same branch as Sprint 7's backend, tagged v1.8.1
+  to skip a v1.8.0 stepping-stone tag). Backup view at
+  `/admin/#backup` exposes whole-instance + per-app downloads (auto-
+  populated from published catalogs), include-activity-log
+  checkboxes, and a unified restore widget that auto-detects
+  `dump_kind` from the uploaded envelope. Restore result renders the
+  per-section restored/skipped/overwritten counts + any
+  defense-in-depth-rejected keys as a collapsible details block.
 
 - ~~**Fix or retire host-side smoke test runs.**~~ Fixed
   2026-05-06. Root cause: Synology's squid proxy was transparently

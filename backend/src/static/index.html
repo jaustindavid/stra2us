@@ -456,30 +456,59 @@
             <section id="backup" class="view">
                 <header>
                     <h1>Backup &amp; Restore</h1>
-                    <p class="subtitle">Export or import all client credentials. Protect your backup with the same care as a password manager file.</p>
+                    <p class="subtitle">Export or import full instance or per-app state. Protect dumps with the same care as a password manager file.</p>
                 </header>
 
                 <div class="card glass-panel form-card backup-warning">
-                    <p>&#9888; <strong>Security Warning:</strong> Backup files contain raw HMAC secrets in plaintext. Anyone with this file can authenticate as any of your devices. Store it securely and never commit it to version control.</p>
+                    <p>&#9888; <strong>Security Warning:</strong> Backup files contain raw HMAC secrets, admin ACL grants, and at-rest-encrypted plaintext. Anyone with this file can authenticate as any of your devices. Store securely and never commit to version control. See <code>docs/fr_backup_envelope_v1.md</code> for the schema.</p>
                 </div>
 
+                <!-- Whole-instance dump (v1.8.0 endpoint). Supersedes the
+                     old /keys/backup; that legacy endpoint still works for
+                     operator scripts that hit it directly, but the UI
+                     drives the richer /backup which also covers KV,
+                     queues, admin_acls, catalogs, device_to_app. -->
                 <div class="card glass-panel form-card">
-                    <h3>Download Backup</h3>
-                    <p class="form-hint">Downloads a <code>stra2us_backup.json</code> file containing all client IDs, secrets, and ACLs.</p>
-                    <button class="primary-btn" data-action="downloadBackup">&#8659; Download Backup</button>
+                    <h3>Whole-instance dump</h3>
+                    <p class="form-hint">Downloads every load-bearing key: clients + ACLs, admin users, KV (incl. catalogs + assets), queues, and the reverse-index. Use for full-server migrations or periodic offline backups.</p>
+                    <div class="input-group checkbox-row">
+                        <input type="checkbox" id="backupIncludeLogs" class="checkbox-input">
+                        <label for="backupIncludeLogs" class="form-hint">Include activity log (large &mdash; up to ~150k entries)</label>
+                    </div>
+                    <button class="primary-btn" data-action="downloadBackup">&#8659; Download whole-instance dump</button>
                 </div>
 
+                <!-- Per-app dumps. The list of apps is loaded from the
+                     same /kv_scan?prefix=_catalog/ that the Catalogs view
+                     uses, so the section auto-populates with whatever apps
+                     have published catalogs. -->
                 <div class="card glass-panel form-card">
-                    <h3>Restore from Backup</h3>
-                    <p class="form-hint">Upload a previously downloaded backup file. Existing clients will be skipped unless you enable Force Overwrite.</p>
+                    <h3>Per-app dump</h3>
+                    <p class="form-hint">Exports just one app&rsquo;s slice: its clients, admin ACL rows scoped to the app, KV under <code>&lt;app&gt;/</code> and <code>_catalog/&lt;app&gt;</code>, queues under <code>&lt;app&gt;/</code>, and the reverse-index entries pointing at it. Wildcard admins are <em>not</em> included &mdash; provision those on the destination separately.</p>
+                    <div class="input-group checkbox-row">
+                        <input type="checkbox" id="perAppIncludeLogs" class="checkbox-input">
+                        <label for="perAppIncludeLogs" class="form-hint">Include activity log entries from this app&rsquo;s clients</label>
+                    </div>
+                    <div id="perAppBackupList" class="text-muted">Loading apps&hellip;</div>
+                </div>
+
+                <!-- Unified restore. Auto-detects dump_kind from the
+                     uploaded envelope and routes to /restore or
+                     /restore/app/<app> accordingly. The envelope's `app`
+                     field is the URL param for per-app dumps; defense-
+                     in-depth on the backend rejects cross-app keys. -->
+                <div class="card glass-panel form-card">
+                    <h3>Restore from dump</h3>
+                    <p class="form-hint">Upload any whole-instance or per-app dump produced above. The dump&rsquo;s <code>dump_kind</code> field is auto-detected; per-app dumps restore into their original app&rsquo;s namespace.</p>
                     <div class="input-group">
                         <input type="file" id="restoreFile" accept=".json" class="file-input">
                     </div>
+                    <div id="restorePreview" class="form-hint hidden mt-sm"></div>
                     <div class="input-group checkbox-row">
                         <input type="checkbox" id="forceRestore" class="checkbox-input">
-                        <label for="forceRestore" class="form-hint">Force Overwrite (replace existing clients)</label>
+                        <label for="forceRestore" class="form-hint">Force overwrite (replace existing values; default is skip-existing)</label>
                     </div>
-                    <button class="primary-btn btn-danger-gradient" data-action="uploadRestore">&#8657; Restore Backup</button>
+                    <button class="primary-btn btn-danger-gradient" data-action="uploadRestore">&#8657; Restore from dump</button>
                     <div id="restoreResult" class="hidden alert-success mt-md"></div>
                 </div>
             </section>
@@ -494,6 +523,6 @@
          from under us. To rev: replace the file in _vendor/ + bump
          the ?v= cache-buster. -->
     <script src="_vendor/js-yaml-4.1.0.min.js"></script>
-    <script src="app.js?v=22"></script>
+    <script src="app.js?v=23"></script>
 </body>
 </html>
