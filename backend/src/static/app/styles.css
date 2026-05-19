@@ -246,6 +246,15 @@ body.app-page {
     color: var(--muted);
     font-size: 0.9rem;
 }
+.app-device .activity-stale-blurb {
+    padding: 8px 12px;
+    margin-bottom: 4px;
+    color: var(--muted);
+    font-size: 0.85rem;
+    font-style: italic;
+    border-left: 3px solid var(--border);
+    background: rgba(127, 127, 127, 0.06);
+}
 
 /* Setting-value row keeps the value text + Reveal button on one line.
    Phase 3 introduced the Reveal button alongside the value; without

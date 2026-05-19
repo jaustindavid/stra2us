@@ -1143,6 +1143,16 @@ async def get_perf_log(
 
 # --- Topic Stream Monitor ---
 
+# Paged-scan tunables for the client_id-filtered branch of
+# stream_monitor. A shared-topic stream may interleave many
+# publishers; a single XREVRANGE window of `limit` entries can miss
+# a sparse publisher entirely. We walk backward in batches until we
+# have `limit` matches, the stream's retained history is exhausted,
+# or the safety cap fires (pathological "client never wrote here").
+_STREAM_FILTER_BATCH = 100
+_STREAM_FILTER_MAX_BATCHES = 10
+
+
 @router.get("/stream/q/{topic:path}")
 async def stream_monitor(
     topic: str,
@@ -1157,9 +1167,20 @@ async def stream_monitor(
     `<app>/public/heartbeep` (the post-namespace-migration shape per
     fr_application_view.md) match. Single-segment topics still match
     the same route.
+
+    When `client_id` is set (one or more values), the scan walks
+    backward in batches and accumulates only matching entries, so a
+    sparse publisher on a shared topic is not crowded out by chatty
+    neighbors. When `client_id` is unset the original single-shot
+    XREVRANGE path is preserved.
     """
     redis = get_redis_client()
-    records = await redis.xrevrange(f"q:{topic}", max="+", min="-", count=limit)
+    key = f"q:{topic}"
+
+    if client_id:
+        records = await _xrevrange_filtered(redis, key, limit, client_id)
+    else:
+        records = await redis.xrevrange(key, max="+", min="-", count=limit)
 
     messages = []
     now = int(time.time())
@@ -1197,3 +1218,42 @@ async def stream_monitor(
         })
 
     return messages
+
+
+async def _xrevrange_filtered(redis, key: str, limit: int, client_ids: List[str]):
+    """Page backward through XREVRANGE accumulating entries whose
+    `client_id` field is in `client_ids`. Returns up to `limit`
+    matches in newest-first order. Stops at the oldest retained
+    entry or at the `_STREAM_FILTER_MAX_BATCHES` safety cap, which
+    bounds the worst-case scan when the filter matches nothing.
+
+    Note: `limit` here is the cap on client_id-matches *before* the
+    caller's per-entry `exp` filter runs. A caller that drops
+    expired entries afterward may end up with fewer than `limit`
+    rows. Intentional — matches the pre-existing unfiltered path's
+    semantics, where `limit` likewise gates the raw XREVRANGE
+    window, not the post-exp result.
+    """
+    wanted = {c.encode("utf-8") if isinstance(c, str) else c for c in client_ids}
+    matches: list = []
+    cursor = "+"
+    for _batch in range(_STREAM_FILTER_MAX_BATCHES):
+        batch = await redis.xrevrange(key, max=cursor, min="-", count=_STREAM_FILTER_BATCH)
+        if not batch:
+            break
+        for msg_id, fields in batch:
+            cid = fields.get(b"client_id", b"")
+            if cid in wanted:
+                matches.append((msg_id, fields))
+                if len(matches) >= limit:
+                    return matches
+        last_id = batch[-1][0]
+        if isinstance(last_id, bytes):
+            last_id = last_id.decode()
+        # Exclusive upper bound for the next page so we don't re-read
+        # the boundary entry. Redis 6.2+ supports `(<id>` syntax.
+        cursor = f"({last_id}"
+        if len(batch) < _STREAM_FILTER_BATCH:
+            # Stream exhausted — no point continuing.
+            break
+    return matches

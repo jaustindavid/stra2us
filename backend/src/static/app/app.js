@@ -316,7 +316,7 @@ async function refreshTelemetry() {
     if (!_state.telemetryTopic) return;
     const topic = encodeURIComponent(_state.telemetryTopic);
     const device = encodeURIComponent(_state.deviceId);
-    const url = `${ADMIN_API}/stream/q/${topic}?client_id=${device}&limit=10`;
+    const url = `${ADMIN_API}/stream/q/${topic}?client_id=${device}&limit=3`;
 
     let messages;
     try {
@@ -388,7 +388,7 @@ function renderActivityList(messages, errorMsg) {
         listEl.innerHTML = `<div class="activity-empty">No recent telemetry from this device.</div>`;
         return;
     }
-    listEl.innerHTML = messages.map(m => {
+    const rowsHtml = messages.map(m => {
         const when = formatAge(Math.max(0, Math.floor(Date.now() / 1000) - m.received_at));
         const payloadStr = (typeof m.data === 'object' && m.data !== null)
             ? JSON.stringify(m.data)
@@ -400,6 +400,16 @@ function renderActivityList(messages, errorMsg) {
             </div>
         `;
     }).join('');
+
+    // Stale-data blurb: when the freshest match we have is older
+    // than the badge's "online" cutoff (heartbeat × ONLINE_MULTIPLIER),
+    // tell the customer the tail is history, not recent activity.
+    const newestAge = Math.max(0, Math.floor(Date.now() / 1000) - messages[0].received_at);
+    const staleThresh = _state.heartbeatSeconds * ONLINE_MULTIPLIER;
+    const blurbHtml = (newestAge > staleThresh)
+        ? `<div class="activity-stale-blurb">No recent heartbeats — showing the last ${messages.length} message${messages.length === 1 ? '' : 's'}.</div>`
+        : '';
+    listEl.innerHTML = blurbHtml + rowsHtml;
 }
 
 // Returns a relative-time phrase. The sub-5s case is a complete
