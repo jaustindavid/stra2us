@@ -1,9 +1,10 @@
 # Copyright (c) 2026 Austin David — PolyForm Noncommercial 1.0.0
 # See LICENSE in the repo root.
 from fastapi import APIRouter, HTTPException, Query, Request, Depends
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional
+from datetime import datetime, timezone
 import json
 import msgpack
 import time
@@ -18,6 +19,8 @@ from api.dependencies import (
     check_acl,
     _prefix_matches,
 )
+from api.routes_app import _resolve_telemetry_topic
+from api.routes_app_theme import load_catalog_dict
 from core.admin_auth import HTPASSWD_FILE, is_rescue_on_default
 from core.perf_log import PerfPhases, PERF_LOG_STREAM
 from core.version import get_release_version
@@ -1257,3 +1260,177 @@ async def _xrevrange_filtered(redis, key: str, limit: int, client_ids: List[str]
             # Stream exhausted — no point continuing.
             break
     return matches
+
+
+# --- Heartbeat dump (operator debug) -----------------------------------
+#
+# `GET /api/admin/dump_heartbeats/<client_id>` — full-history dump of
+# a single client's heartbeat publishes, as JSONL. Bounded by the
+# stream's own 7-day EXPIRE (no per-entry exp filter applied here:
+# operators debugging a stale device want the stale entries too).
+#
+# Topic is resolved the same way the customer-facing /app/ page
+# resolves it (catalog `telemetry_topic` with `{app}`/`{device}`
+# substitution; default `<app>/public/heartbeep`). The catalog read
+# is *not* separately ACL-gated — the catalog is consulted only to
+# learn which topic to gate on. The operative gate is the
+# `q/<topic>` ACL check on the resolved topic.
+_DUMP_HEARTBEATS_PAGE = 500
+
+
+@router.get("/dump_heartbeats/{client_id}")
+async def dump_heartbeats(client_id: str, request: Request):
+    """Stream every heartbeat from `client_id` within the stream's
+    retention window as JSONL.
+
+    Auth: this handler can't use `require_admin_queue("read")` —
+    the topic is *derived* in-handler (catalog lookup), not a path
+    param the dependency could see. We re-implement the same check
+    explicitly after resolving the topic.
+
+    Response shape (newest-first):
+        line 0 — `{"_meta": {...}}` metadata record
+        line 1..N — one decoded entry per line
+        empty body after `_meta` if no matches found
+
+    Each data line carries both `data` (msgpack-decoded; null if
+    decode fails) and `payload_hex` (raw bytes) for forensic
+    completeness when a payload won't round-trip cleanly.
+    """
+    ctx = await get_admin_context(request)
+
+    redis = get_redis_client()
+    acl_raw = await redis.get(f"client:{client_id}:acl")
+    if not acl_raw:
+        raise HTTPException(status_code=404, detail="Client not found")
+    try:
+        client_acl = json.loads(acl_raw)
+    except ValueError:
+        client_acl = {"permissions": []}
+
+    app = _device_app_for_client(client_acl, client_id)
+    if app is None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Client has no app affinity; cannot resolve a "
+                "heartbeat topic. Use the redis-cli directly for "
+                "clients without a catalog."
+            ),
+        )
+
+    catalog = await load_catalog_dict(app)
+    topic = _resolve_telemetry_topic(app, client_id, catalog)
+
+    # Gate on the resolved topic. A scoped admin (e.g. someother_app:rw)
+    # asking about a client whose telemetry lands under critterchron/
+    # will 403 here, same as if they'd hit /api/admin/stream/q/<topic>.
+    await check_acl(ctx, f"q/{topic}", mode="read")
+
+    wanted_cid = client_id.encode("utf-8")
+    key = f"q:{topic}"
+    generated_at_iso = (
+        datetime.now(tz=timezone.utc).isoformat(timespec="seconds")
+                                      .replace("+00:00", "Z")
+    )
+    utc_stamp = datetime.now(tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    filename = f"heartbeats-{client_id}-{utc_stamp}.jsonl"
+
+    async def _iter_jsonl():
+        meta = {
+            "_meta": {
+                "topic": topic,
+                "client_id": client_id,
+                "generated_at_iso": generated_at_iso,
+                "stream_max_age_days": 7,
+            }
+        }
+        yield json.dumps(meta) + "\n"
+
+        # Walk the stream forward in pages, collecting matches.
+        # The brief calls for forward XRANGE traversal with an
+        # exclusive `(<last_id>` lower bound between pages (mirror of
+        # _xrevrange_filtered's backward idiom). We then emit the
+        # collected matches in reverse so the JSONL body reads
+        # newest-first, matching stream_monitor's convention. Memory
+        # cost is bounded by the 7-day retention (~10MB worst case
+        # per the brief's sizing).
+        cursor = "-"
+        matches: list = []
+        while True:
+            page = await redis.xrange(
+                key, min=cursor, max="+", count=_DUMP_HEARTBEATS_PAGE
+            )
+            if not page:
+                break
+            for msg_id, fields in page:
+                cid = fields.get(b"client_id", b"")
+                if cid == wanted_cid:
+                    matches.append((msg_id, fields))
+            last_id = page[-1][0]
+            if isinstance(last_id, bytes):
+                last_id = last_id.decode()
+            # Exclusive lower bound — Redis 6.2+ `(<id>` syntax,
+            # same as _xrevrange_filtered's exclusive upper bound.
+            cursor = f"({last_id}"
+            if len(page) < _DUMP_HEARTBEATS_PAGE:
+                # Stream exhausted.
+                break
+
+        # Newest-first emission. matches are oldest-first from XRANGE.
+        for msg_id, fields in reversed(matches):
+            if isinstance(msg_id, bytes):
+                msg_id_s = msg_id.decode()
+            else:
+                msg_id_s = msg_id
+            ms_str = msg_id_s.split("-", 1)[0]
+            try:
+                ts_ms = int(ms_str)
+            except ValueError:
+                ts_ms = 0
+            received_at_iso = (
+                datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc)
+                        .isoformat(timespec="seconds")
+                        .replace("+00:00", "Z")
+            )
+
+            raw_payload = fields.get(b"payload", b"") or b""
+            try:
+                data = msgpack.unpackb(raw_payload, raw=False)
+            except Exception:
+                # Forensic mode: payload kept verbatim in payload_hex,
+                # `data` stays semantically "decoded payload or null".
+                # Diverges from stream_monitor's hex-into-data fallback
+                # — see brief, "JSON encoding".
+                data = None
+
+            exp_raw = fields.get(b"exp", b"0")
+            try:
+                exp_val = int(exp_raw)
+            except (TypeError, ValueError):
+                exp_val = 0
+
+            cid_raw = fields.get(b"client_id", b"")
+            if isinstance(cid_raw, bytes):
+                cid_str = cid_raw.decode("utf-8", errors="replace")
+            else:
+                cid_str = str(cid_raw)
+
+            entry = {
+                "ts_ms": ts_ms,
+                "received_at_iso": received_at_iso,
+                "client_id": cid_str,
+                "exp": exp_val,
+                "data": data,
+                "payload_hex": raw_payload.hex(),
+            }
+            yield json.dumps(entry, default=str) + "\n"
+
+    return StreamingResponse(
+        _iter_jsonl(),
+        media_type="application/x-ndjson",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )

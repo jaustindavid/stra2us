@@ -265,6 +265,7 @@ async function fetchKeys() {
             <td>${formatAclSummary(c.acl)}</td>
             <td class="col-nowrap">
                 <button class="btn-sm" data-action="openAclModal" data-target="${id}">Edit ACL</button>
+                <button class="btn-sm" data-action="dumpHeartbeats" data-target="${id}">Dump heartbeats</button>
                 <button class="btn-sm danger" data-action="revokeClient" data-target="${id}">Revoke</button>
             </td>
         </tr>
@@ -343,6 +344,20 @@ async function revokeClient(id) {
     if(!confirm(`Revoke client ${id}? This action cannot be undone.`)) return;
     await fetchAPI(`/keys/${id}`, 'DELETE');
     fetchKeys();
+}
+
+// Operator debug affordance: download every heartbeat from this
+// client_id within the stream's 7-day retention window as JSONL.
+// Server resolves the heartbeat topic from the catalog the same way
+// the customer /app/ page does, gates on the resolved q/<topic> ACL,
+// and emits a leading `_meta` line + one entry per matching record
+// (newest-first). The shared `_downloadDumpAt` helper honors the
+// server's Content-Disposition filename and surfaces non-2xx with an
+// alert. This is intentionally a debug-only button (no modal,
+// no progress UI) per the dispatch brief.
+async function dumpHeartbeats(id) {
+    const url = `${API_BASE}/dump_heartbeats/${encodeURIComponent(id)}`;
+    await _downloadDumpAt(url, `heartbeats-${id}.jsonl`);
 }
 
 // --- ACL Editor ---
@@ -2314,6 +2329,7 @@ const ACTIONS = {
     deleteData: (el) => deleteData(el.dataset.kind, el.dataset.target),
     editData: (el) => editData(el.dataset.kind, el.dataset.target),
     revokeClient: (el) => revokeClient(el.dataset.target),
+    dumpHeartbeats: (el) => dumpHeartbeats(el.dataset.target),
 
     // Admin user management
     confirmDeleteAdminUser: (el) => confirmDeleteAdminUser(el.dataset.uname),
