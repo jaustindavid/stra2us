@@ -151,20 +151,55 @@ def signed_msgpack(context: dict, request: Request, obj,
                            status_code=status_code)
 
 
+# Per-client strictly-increasing nonce for kvenc-encrypted responses
+# (v1.8.x security pass, finding #3). The kvenc keystream is
+# HMAC(secret, label || nonce || counter); if two *different* encrypted
+# values are served to the same client under the same nonce, their
+# ciphertexts XOR to the plaintext-XOR — a two-time pad a wire observer
+# can crib-drag. The prior nonce was the wall-clock second, which
+# collides whenever a client fetches two encrypted values in the same
+# second. We instead hand out a per-client monotonic nonce, max(now,
+# last+1): unique per client, still timestamp-like (stays within the
+# client's clock-drift window for any realistic burst), and still
+# carried in X-Response-Timestamp — so clients verify the signature and
+# derive the decryption keystream from it UNCHANGED. Server-only fix; no
+# firmware/CLI update required. The Lua body makes read-max-write atomic
+# across uvicorn workers (in-process state wouldn't be shared).
+_KVENC_NONCE_LUA = """
+local now = tonumber(ARGV[1])
+local last = tonumber(redis.call('GET', KEYS[1]) or '0')
+if last >= now then now = last + 1 end
+redis.call('SET', KEYS[1], now)
+return now
+"""
+
+
+async def next_kvenc_nonce(redis, client_id: str) -> int:
+    """Allocate the next unique kvenc nonce for `client_id`. Atomic across
+    workers via the Lua script above."""
+    now = int(time.time())
+    nonce = await redis.eval(
+        _KVENC_NONCE_LUA, 1, f"kvenc:nonce:{client_id}", now
+    )
+    return int(nonce)
+
+
 def signed_encrypted_response(context: dict, request: Request,
-                              plaintext: bytes) -> Response:
+                              plaintext: bytes, nonce: int) -> Response:
     """GET response for an encrypted KV record. Encrypts `plaintext` with the
     HMAC-keystream cipher keyed by the caller's shared secret, using the
-    response timestamp as nonce, and wraps the ciphertext in msgpack ext
-    type 0x21. The signature still covers the full (ciphertext-bearing) body
+    caller-supplied strictly-increasing `nonce` (NOT the bare wall-clock
+    second — see `next_kvenc_nonce`), and wraps the ciphertext in msgpack
+    ext type 0x21. The same `nonce` is emitted as X-Response-Timestamp and
+    used for the signature, so the client verifies + decrypts from one
+    value. The signature still covers the full (ciphertext-bearing) body
     so authenticity holds independently of confidentiality."""
-    ts = int(time.time())
-    ciphertext = kvenc_xor(context["secret_hex"], ts, plaintext)
+    ciphertext = kvenc_xor(context["secret_hex"], nonce, plaintext)
     body = msgpack.packb(msgpack.ExtType(KVENC_EXT_TYPE, ciphertext))
     uri = str(request.url.path)
-    sig = sign_payload(context["secret_hex"], uri, body, ts)
+    sig = sign_payload(context["secret_hex"], uri, body, nonce)
     headers = {
-        "X-Response-Timestamp": str(ts),
+        "X-Response-Timestamp": str(nonce),
         "X-Response-Signature": sig,
     }
     return Response(content=body, status_code=200,
@@ -367,7 +402,10 @@ async def read_kv(
         else:
             raise HTTPException(status_code=500,
                                 detail="Encrypted record: stored value is not str/bin")
-        return signed_encrypted_response(context, request, plaintext)
+        # v1.8.x finding #3: unique per-client nonce so two encrypted
+        # values fetched in the same second never share a keystream.
+        nonce = await next_kvenc_nonce(redis, context["client_id"])
+        return signed_encrypted_response(context, request, plaintext, nonce)
 
     return signed_response(context, request, val)
 

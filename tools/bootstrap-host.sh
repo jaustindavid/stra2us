@@ -72,6 +72,12 @@ seed_htpasswd() {
     if [[ ! -f "$live_file" ]]; then
         echo "→ $live_file not present, seeding from admin.htpasswd.default"
         cp "$default_file" "$live_file"
+        echo "  ⚠️  The seeded 'rescue' user has a PLACEHOLDER password (a hash"
+        echo "      of a random string nobody knows — unusable as-is) but maps to"
+        echo "      FULL SUPERUSER. Before exposing this host, set a strong one:"
+        echo "        cd backend && python3 create_admin.py rescue \"\$(openssl rand -base64 24)\""
+        echo "      (or delete the rescue line and rely on OAuth). See"
+        echo "      backend/admin.htpasswd.default for the full rationale."
         return
     fi
 
@@ -171,9 +177,15 @@ Next steps:
      cd $PROD_DIR
      # one-time: provision the prod admin htpasswd entry
      cd backend && python3 create_admin.py admin '<chosen-password>' && cd ..
+     # ⚠️  MANDATORY: rotate the placeholder 'rescue' password (it maps to
+     #     full superuser; shipped value is an unusable random-hash). Use a
+     #     STRONG random one and save it in your password manager:
+     cd backend && python3 create_admin.py rescue "\$(openssl rand -base64 24)" && cd ..
+     #     (or delete the rescue line and rely solely on OAuth)
      # bring up prod
      docker compose up -d
      # wait for tunnel + smoke (manual today; deploy.sh wraps later)
+     # The admin dashboard shows a rescue-on-default banner until rotated.
 
 3. On the HOST, in $STAGING_DIR:
 

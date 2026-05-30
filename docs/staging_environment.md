@@ -319,6 +319,18 @@ Seeded once at staging bring-up (a `tools/stage seed-users` subcommand,
 or baked into `tools/stage up` first-time logic). Idempotent — re-running
 should not error if the rows already exist.
 
+> **⚠️ Rescue password — mandatory rotation before exposure.** A fresh
+> host is bootstrapped with a `rescue` htpasswd entry from
+> `backend/admin.htpasswd.default`. That shipped entry is a hash of a
+> random password nobody knows (unusable as-is), but the `rescue` user
+> is hardcoded to full superuser (`*:rw`). Before any host — prod or
+> staging — is reachable, rotate it to a strong random value:
+> `cd backend && python3 create_admin.py rescue "$(openssl rand -base64 24)"`
+> (or delete the rescue line and rely on OAuth). There is no Basic-Auth
+> brute-force lockout yet (see `docs/fr_basic_auth_lockout.md`), so a
+> weak rescue password is online-guessable and grants full compromise.
+> The admin dashboard shows a `rescue-on-default` banner until rotated.
+
 ### Database state — preserve
 
 Staging Redis state persists across `tools/stage up`/`down`/`rebuild`

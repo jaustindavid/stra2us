@@ -14,9 +14,19 @@ HTPASSWD_FILE = os.environ.get(
 
 # Bootstrap default htpasswd file. Tracked in git; bootstrap-host.sh
 # copies it into HTPASSWD_FILE on a fresh host so the rescue user
-# exists from minute zero. Operator is expected to change the rescue
-# password before exposing the device hostname; the startup check
-# (`is_rescue_on_default`) flags when they haven't yet.
+# exists from minute zero.
+#
+# SECURITY: the shipped `rescue` entry is a hash of a RANDOM password
+# nobody knows — unusable as a login as-shipped (publishing the hash
+# is therefore safe). BUT `rescue` is hardcoded to full superuser
+# (`*:rw`, see dependencies.py RESCUE_USERS / _RESCUE_ACL), and there
+# is no Basic-Auth brute-force lockout yet (docs/fr_basic_auth_lockout.md).
+# So the operator MUST run `create_admin.py rescue <strong-random>` (or
+# delete the rescue line and use OAuth) BEFORE exposing the host — a
+# weak rescue password is online-guessable and grants full compromise.
+# `is_rescue_on_default()` warns at startup + in the dashboard until
+# rotated. The noisy operator-facing rationale lives in the header of
+# backend/admin.htpasswd.default.
 DEFAULT_HTPASSWD_FILE = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
     "admin.htpasswd.default",

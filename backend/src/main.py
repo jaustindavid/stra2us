@@ -22,12 +22,17 @@ app = FastAPI(title="IoT Telemetry Service")
 
 import time
 import base64
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 from fastapi import Request, Response
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, JSONResponse
 from starlette.requests import ClientDisconnect
 from core.redis_client import get_redis_client
 from core.admin_auth import verify_password, generate_session_token, verify_session_token, is_rescue_on_default
+# Single source of truth for the Secure-cookie default (honors the
+# STRA2US_COOKIE_INSECURE local-dev escape hatch). Imported so the
+# htpasswd login path and the OAuth path can't drift apart on cookie
+# flags — that drift was the v1.8.x security finding this fixes.
+from api.routes_oauth import _cookie_secure
 from core.perf_log import DEFAULT_THRESHOLD_MS, write_perf_entry
 
 
@@ -52,7 +57,7 @@ _err_log = logging.getLogger("stra2us.errors")
 BROWSER_HOST = os.environ.get("STRA2US_BROWSER_HOST", "stra2us.austindavid.com")
 
 
-def _is_browser_host(request: Request) -> bool:
+def _browser_facing_host(request: Request) -> str | None:
     # Behind the Cloudflare tunnel, request.url.hostname is the
     # internal docker service name (e.g. "stra2us-iot") because
     # cloudflared rewrites the Host header to the configured
@@ -62,8 +67,64 @@ def _is_browser_host(request: Request) -> bool:
     # only the first comma-separated value — the header can carry
     # a list when multiple proxies are in path.
     fwd = request.headers.get("x-forwarded-host", "")
-    host = fwd.split(",")[0].strip() if fwd else request.url.hostname
-    return host == BROWSER_HOST
+    return fwd.split(",")[0].strip() if fwd else request.url.hostname
+
+
+def _is_browser_host(request: Request) -> bool:
+    return _browser_facing_host(request) == BROWSER_HOST
+
+
+# CSRF defense-in-depth (v1.8.x security finding #2). The admin session
+# is a cookie; SameSite=lax on it is the primary CSRF control, but we
+# also reject state-changing admin/app requests whose Origin header
+# names a host we don't recognize. Browsers always send Origin on
+# cross-origin (and modern same-origin) state-changing requests, so a
+# forged cross-site request carries an attacker Origin we reject.
+# Non-browser clients (curl, the stra2us CLI doing backup/restore) send
+# no Origin and pass through — they carry no ambient session cookie for
+# a CSRF to abuse. STRA2US_ALLOWED_ORIGINS adds extra hostnames for
+# unusual cross-origin setups (normally unnecessary — same-origin is
+# auto-allowed via the request's own browser-facing host).
+_STATE_CHANGING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+def _configured_extra_origins() -> list[str]:
+    """Parsed STRA2US_ALLOWED_ORIGINS — the single shared allowlist of
+    trusted browser origins, consumed by BOTH the CSRF Origin guard and
+    the CORS middleware. Entries may be bare hosts (`example.com`) or
+    full origins (`http://localhost:5173`); each consumer normalizes to
+    the form it needs."""
+    raw = os.environ.get("STRA2US_ALLOWED_ORIGINS", "")
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def _allowed_origin_hosts(request: Request) -> set[str]:
+    hosts = {_browser_facing_host(request), BROWSER_HOST}
+    for item in _configured_extra_origins():
+        # Tolerate either a bare host or a full origin (extract the host).
+        host = urlparse(item).hostname if "://" in item else item
+        if host:
+            hosts.add(host)
+    hosts.discard(None)
+    return hosts
+
+
+def _cors_allowed_origins() -> list[str]:
+    """Explicit CORS origin allowlist (replaces the old `*`). Defaults to
+    `https://<BROWSER_HOST>`; STRA2US_ALLOWED_ORIGINS adds more. Bare-host
+    entries are assumed https (the prod case); write dev origins as full
+    origins (e.g. `http://localhost:5173`) to keep their scheme/port."""
+    origins = {f"https://{BROWSER_HOST}"}
+    for item in _configured_extra_origins():
+        origins.add(item if "://" in item else f"https://{item}")
+    return sorted(origins)
+
+
+def _csrf_origin_ok(request: Request) -> bool:
+    origin = request.headers.get("origin")
+    if not origin:
+        return True  # no Origin → not a browser CSRF vector
+    return urlparse(origin).hostname in _allowed_origin_hosts(request)
 
 
 def _path_needs_admin_auth(path: str) -> bool:
@@ -132,6 +193,14 @@ def _path_needs_admin_auth(path: str) -> bool:
 @app.middleware("http")
 async def admin_auth_middleware(request: Request, call_next):
     path = request.url.path
+    # CSRF defense-in-depth: reject cross-origin state-changing requests
+    # to the cookie-authed admin + app-mutation surface BEFORE auth runs,
+    # so a forged request gets a clean 403 rather than being processed.
+    if request.method in _STATE_CHANGING_METHODS and _path_needs_admin_auth(path):
+        if not _csrf_origin_ok(request):
+            return JSONResponse(
+                {"detail": "cross-origin request rejected"}, status_code=403
+            )
     if _path_needs_admin_auth(path):
         # Check cookie first
         cookie = request.cookies.get("admin_session")
@@ -154,7 +223,22 @@ async def admin_auth_middleware(request: Request, call_next):
                     request.state.admin_user = username
                     response = await call_next(request)
                     token = generate_session_token(username)
-                    response.set_cookie(key="admin_session", value=token, httponly=True)
+                    # Mirror the OAuth path's cookie flags (routes_oauth.py).
+                    # Pre-fix this path set only httponly, leaving the
+                    # highest-privilege (rescue/htpasswd) session cookie
+                    # without Secure or SameSite — sendable over plain HTTP
+                    # and weaker against CSRF. max_age matches the token's
+                    # own 24h expiry; path="/" so logout's delete_cookie
+                    # (path="/") actually clears it.
+                    response.set_cookie(
+                        key="admin_session",
+                        value=token,
+                        max_age=24 * 60 * 60,
+                        httponly=True,
+                        secure=_cookie_secure(),
+                        samesite="lax",
+                        path="/",
+                    )
                     return response
             except Exception:
                 pass # Fall through to 401
@@ -356,10 +440,16 @@ async def perf_log_middleware(request: Request, call_next):
                 print(f"[PERF_LOG] write failed: {e}", flush=True)
 
 
-# Allow CORS for development convenience
+# CORS: explicit origin allowlist (was `*` + credentials, which made
+# Starlette reflect any Origin with Allow-Credentials:true — effectively
+# "any site may make credentialed reads of this API"). The admin UI is
+# same-origin with the API so it needs no CORS at all; device/CLI clients
+# ignore CORS entirely. So the allowlist is just the known browser
+# host(s) (+ STRA2US_ALLOWED_ORIGINS for any dev origins). See the v1.8.x
+# security pass, finding #4.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_allowed_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
