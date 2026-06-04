@@ -3,15 +3,18 @@
 Stra2Us is a high-performance, stateless IoT messaging and configuration
 relay designed for resource-constrained devices (ESP32, Particle Photon
 2, and similar). It features an async Python/Redis backend, a
-zero-malloc C++ client SDK, and a browser-based admin dashboard.
+zero-malloc C++ client SDK, a Python reference CLI, and a browser-based
+admin dashboard with per-app, catalog-driven device configuration.
 
 > **License:** [PolyForm Noncommercial 1.0.0](LICENSE) — source-available
 > for noncommercial use; reselling or commercial use requires explicit
 > permission. Personal projects, research, education, hobby use → fine.
 
-> **Status:** Production-shipped (v1.5.x). The deploy pipeline is dev →
-> staging → prod via `tools/stage`; see [Deploying](#deploying) below.
-> The discipline that produced this iteration is captured in
+> **Status:** Production-shipped, **v1.8.1**. The deploy pipeline is
+> dev → staging → prod via `tools/stage`; see [Deploying](#deploying).
+> Admin auth is **Google OAuth** on the browser hostname, with an
+> htpasswd `rescue` break-glass path on the device hostname. The
+> discipline that produced this is captured in
 > [Rules of Operation](#rules-of-operation) and
 > [`docs/fr_v15_incremental.md`](docs/fr_v15_incremental.md).
 
@@ -20,8 +23,10 @@ zero-malloc C++ client SDK, and a browser-based admin dashboard.
 - **Stateless Backend:** Zero in-process state — everything lives in
   Redis. Scales horizontally out of the box.
 - **HMAC-SHA256 Signatures:** Devices sign requests with a shared
-  secret + Unix timestamp. The server enforces a ±300 second replay
-  window.
+  secret + Unix timestamp (`X-Client-ID` / `X-Timestamp` /
+  `X-Signature`). The server enforces a ±300 second replay window, and
+  signs its responses back so a device can verify them with the same
+  key.
 - **Broadcast Streams:** Queues use Redis Streams (`XADD`/`XREAD`).
   Each subscriber maintains its own cursor, so multiple devices can
   read independently without consuming each other's messages.
@@ -29,13 +34,30 @@ zero-malloc C++ client SDK, and a browser-based admin dashboard.
   by default, cutting wire overhead vs. JSON. Plain-text
   (`text/plain`) is also accepted and automatically wrapped
   server-side.
+- **Per-app catalog UI:** Apps describe their KV variables in a per-app
+  YAML *catalog* (`<app>.s2s.yaml`); the admin dashboard renders a
+  typed, validated configuration page per device from it. Values
+  resolve `<app>/<device>` → `<app>/public` → catalog default.
+- **Encrypted values:** A field can be marked `encrypted: true`; the
+  server encrypts it on the device GET response (HMAC-keystream cipher,
+  msgpack ext type `0x21`) so a wire observer doesn't see the
+  plaintext. (Wire-confidentiality on fetch — values are stored in
+  cleartext at rest; see [Security](#security).)
+- **Backup / restore:** Whole-instance and per-app dump/restore of all
+  load-bearing state (clients, ACLs, KV, catalogs, queues), with a
+  versioned envelope format.
 
 ## Technical Stack
 
-- **Backend:** Python 3.9+, FastAPI, Uvicorn, Redis Streams.
+- **Backend:** Python **3.10+**, FastAPI, Uvicorn (multi-worker),
+  Redis Streams.
 - **Client SDK:** C++ (Arduino/ESP-IDF), zero-malloc, mbedTLS HMAC.
-- **Dashboard:** Vanilla HTML/JS, no build step, protected by Basic
-  Auth + session cookies.
+- **Reference CLI:** `stra2us` (Python) — publish/consume, KV
+  read/write, catalog publish, synthetic-traffic generation.
+- **Dashboard:** Vanilla HTML/JS, no build step. **Google OAuth** on
+  the browser hostname; htpasswd Basic Auth `rescue` path on the
+  device hostname; HMAC-signed session cookies (`Secure` +
+  `SameSite=Lax`).
 
 ---
 
@@ -77,9 +99,7 @@ edits, topology changes, recovery work.
    version, or an image tag from a deploy that ran successfully.
    Picking arbitrary old version numbers without that evidence is
    *not* a rollback — it's a guess that adds new variables on top
-   of the original failure, and is worse than no action. The first
-   v1.5 attempt's "uvicorn rolled back 18 months" was this kind of
-   guess.
+   of the original failure, and is worse than no action.
 
 8. **Pin direct deps; lock transitive ones.** `requirements.txt` is
    the human-readable list of direct deps, pinned with `==`.
@@ -90,10 +110,9 @@ edits, topology changes, recovery work.
 9. **Don't skip checkpoints.** A change is done when its checkpoint
    passes — which means the smoke test is green AND, for any change
    that touches human-facing UI, a deliberate end-to-end walk-through
-   in a real browser (sign in, navigate to the affected pages,
-   exercise the changed flow). Automated tests can't see layout,
-   shape, or "does this still feel right" — eyeballs do. "It probably
-   works" and "I glanced at it" are not checkpoints.
+   in a real browser. Automated tests can't see layout, shape, or
+   "does this still feel right" — eyeballs do. "It probably works"
+   and "I glanced at it" are not checkpoints.
 
 See [`docs/fr_v15_incremental.md`](docs/fr_v15_incremental.md) for
 the v1.5 rollout that made these rules concrete.
@@ -120,122 +139,118 @@ tools/sync-secrets.sh
 ./tools/bootstrap-host.sh
 ```
 
+> ⚠️ **Bootstrap finishes with a mandatory step: rotate the `rescue`
+> password.** See [The `rescue` user](#the-rescue-user) — the shipped
+> default is intentionally unusable, and `rescue` maps to wildcard
+> superuser, so a fresh host MUST have a strong rescue password set
+> before it is reachable.
+
 ### Bringing up staging
 
 ```bash
 # On host, in $STAGING_DIR:
 tools/stage up
 tools/stage wait-tunnel
-tools/stage seed-users      # idempotent
-tools/stage smoke           # 9/9 expected once a device is heartbeating
+tools/stage seed-users          # idempotent
+tools/stage seed-smoke-device   # one-time, for the device-flow smoke
+tools/stage smoke               # hostname + device-flow checks; all green
 ```
+
+`tools/stage smoke` runs the public-surface checks **and** the
+HMAC-signed device-flow smoke (`POST /q/`, `POST/GET /kv/` with
+response-signature verification). Run just the latter with
+`tools/stage smoke-device`.
 
 ### Promoting to prod
 
-Tag a staging-verified commit, then re-point prod's checkout at
-the tag:
+Tag a staging-verified commit, then promote:
 
 ```bash
 # On dev:
 git tag -a v1.X.Y <sha-verified-on-staging> -m "what changed"
 git push origin v1.X.Y
 
-# On host, in $PROD_DIR:
-git fetch --tags
-git checkout -B deploy v1.X.Y
-docker compose build stra2us-iot
-docker compose up -d
-( set -a && source .env && tools/smoke_test.sh )    # 9/9 expected
+# On host:
+tools/stage promote v1.X.Y      # checks out the tag in $PROD_DIR,
+                                # rebuilds, restarts, waits for the tunnel
+tools/stage smoke-prod          # verify
 ```
 
-A `tools/stage promote <tag>` wrapper for the prod side is on the
-TODO list.
+`tools/stage promote` writes the running tag into `backend/VERSION`,
+which the admin sidebar surfaces as a version badge (`GET
+/api/admin/release`) — so "did my deploy land?" is answerable from the
+browser.
 
 ### The `rescue` user
 
-Stra2Us ships with a `rescue` htpasswd entry provisioned by
-`bootstrap-host.sh` from `backend/admin.htpasswd.default`. The
-default password is **intentionally undocumented** — it's a
-placeholder so a fresh-bootstrap host has *some* working htpasswd
-login while the operator gets oriented, and the soft warning (server
-log) plus UI banner fire until it's overridden.
+Stra2Us ships a `rescue` htpasswd entry (seeded by `bootstrap-host.sh`
+from [`backend/admin.htpasswd.default`](backend/admin.htpasswd.default))
+that maps to an implicit **wildcard superuser** ACL via `RESCUE_USERS`
+in `backend/src/api/dependencies.py`. It's the break-glass account for
+when OAuth is unavailable.
 
-**Override on every fresh installation.** From the host:
+**The shipped default is a hash of a random password nobody knows — it
+is intentionally *unusable* as a login** (publishing the hash is
+therefore safe). That is fail-safe, not a convenience: you must set a
+real password before the rescue path works.
+
+**Rotate it to a strong random value on every fresh host, before
+exposure:**
 
 ```bash
 cd $PROD_DIR/backend
-python3 create_admin.py rescue '<your-chosen-password>'
-docker compose --env-file ../.env -f ../docker-compose.yaml \
-    -p stra2us-prod restart stra2us-iot
+python3 create_admin.py rescue "$(openssl rand -base64 24)"   # save it
 ```
 
-(Same dance in `$STAGING_DIR` for staging, finishing with
-`tools/stage deploy` to rebuild + restart.)
-
-The `rescue` user has implicit wildcard ACL via the `RESCUE_USERS`
-list in `backend/src/api/dependencies.py`, so it works as a true
-break-glass account regardless of Redis state — even on a fresh
-bootstrap before `tools/stage seed-users` has run.
+(or delete the `rescue` line entirely and rely solely on OAuth). There
+is **no Basic-Auth brute-force lockout yet**, so a *weak* rescue
+password is online-guessable and grants full compromise — use a long
+random one. `is_rescue_on_default()` raises a startup warning and a
+dashboard banner until the entry diverges from the shipped default.
+Full rationale: the header of `admin.htpasswd.default` and
+[`docs/security_audit_2026-05.md`](docs/security_audit_2026-05.md).
 
 ### Operator sign-in: OAuth, not htpasswd
 
-Post-v1.5, the operator's primary admin path is **OAuth (Google) on
-the browser hostname** (`stra2us.austindavid.com`). Their identity
-lives as `admin_acls:<google-email>` in Redis, edited via the Admin
-Users page. They do **not** have an htpasswd entry.
-
-`backend/admin.htpasswd` is expected to contain only:
-- `rescue` — break-glass via the device hostname's Basic Auth path
-  (RESCUE_USERS-covered, always wildcard).
-- `smoke` — used by `tools/smoke_test.sh` for the activity-log
-  heartbeat check; provisioned via `tools/stage seed-users`.
-
-If you find operator-named entries (e.g. an old username you used to
-type into the Basic Auth dialog), they're an artifact of pre-v1.5
-setup and can be removed: delete the htpasswd line, then delete the
-corresponding `admin_acls:<name>` Redis row (visible in the Admin
-Users page as `acl-only` source post-Phase-5; click Delete).
-
-**Footgun worth knowing:** the "is on default" check compares the
-live htpasswd's `rescue` line to `admin.htpasswd.default`
-byte-for-byte. If you ever change rescue's password to something
-else and then deliberately re-set it to the documented default via
-`create_admin.py rescue '<default-pass>'`, a fresh salt is generated
-and the lines diverge — the banner *stays silent* even though the
-password is back to the default plaintext. This is by design: we
-treat "operator ran `create_admin.py`" as "operator made an active
-choice." If you want the warning to fire again, do a literal line
-copy from `admin.htpasswd.default` into `admin.htpasswd` instead.
+The operator's primary admin path is **OAuth (Google) on the browser
+hostname** (`stra2us.austindavid.com`). Their identity lives as
+`admin_acls:<google-email>` in Redis, edited via the Admin Users page.
+They do **not** have an htpasswd entry. `backend/admin.htpasswd` is
+expected to contain only `rescue` (break-glass) and `smoke` (used by
+`tools/smoke_test.sh`).
 
 ### Local development (no docker)
 
 For running tests against a host-side backend (no docker), see
-[`docs/local_dev.md`](docs/local_dev.md) — covers the bring-up
-dance for `tools/tests/test_*_live.py`.
+[`docs/local_dev.md`](docs/local_dev.md).
 
 ---
 
 ## API Reference
 
-Full API documentation is in [`docs/api.md`](docs/api.md).
-
-Apps built on Stra2us can describe their KV variables with a per-app
-YAML *catalog* (`<app>.s2s.yaml`), consumed by the [reference CLI in
-`tools/`](tools/README.md). See
-[`docs/catalog_spec.md`](docs/catalog_spec.md) for the schema.
+Full API documentation is in [`docs/api.md`](docs/api.md). Apps
+describe their KV variables with a per-app YAML *catalog*
+(`<app>.s2s.yaml`), consumed by the [reference CLI](tools/README.md);
+schema in [`docs/catalog_spec.md`](docs/catalog_spec.md).
 
 ### Quick Reference
 
-| Endpoint                       | Auth  | Description                |
-|--------------------------------|-------|----------------------------|
-| `GET /health`                  | None  | Liveness check             |
-| `POST /q/{topic}`              | HMAC  | Publish to a queue         |
-| `GET /q/{topic}`               | HMAC  | Consume from a queue       |
-| `POST /kv/{key}`               | HMAC  | Write a persistent KV      |
-| `GET /kv/{key}`                | HMAC  | Read a persistent KV       |
-| `GET /api/admin/keys/backup`   | Admin | Download credentials JSON  |
-| `POST /api/admin/keys/restore` | Admin | Restore from backup file   |
-| `POST /api/admin/kv/{key}`     | Admin | Create/modify a KV (UI)    |
+| Endpoint                              | Auth       | Description                                  |
+|---------------------------------------|------------|----------------------------------------------|
+| `GET /health`                         | None       | Liveness check                               |
+| `POST /q/{topic}`                     | HMAC       | Publish to a queue                           |
+| `GET /q/{topic}`                      | HMAC       | Consume from a queue (per-consumer cursor)   |
+| `POST /kv/{key}`                      | HMAC       | Write a KV value (`X-Encrypted: 1` flags it) |
+| `GET /kv/{key}`                       | HMAC       | Read a KV value (encrypted → signed ext-0x21)|
+| `DELETE /kv/{key}`                    | HMAC       | Delete a KV value                            |
+| `GET /app/{app}/{device}`             | OAuth      | Customer device-config page                  |
+| `/oauth/google/{login,callback}`      | —          | Google OAuth flow                            |
+| `GET /api/admin/release`              | Admin      | Running release tag (sidebar badge)          |
+| `GET /api/admin/backup`               | Superuser  | Whole-instance dump                          |
+| `GET /api/admin/backup/app/{app}`     | Superuser  | Per-app dump                                 |
+| `POST /api/admin/restore`             | Superuser  | Restore a dump (`?force_overwrite=1`)        |
+| `POST /api/admin/restore/app/{app}`   | Superuser  | Per-app restore (URL app is authoritative)   |
+| `GET /api/admin/keys/backup`          | Superuser  | *Legacy* — client-credentials-only dump      |
 
 Both `/q/` and `/kv/` accept `Content-Type: application/x-msgpack`
 (default) or `Content-Type: text/plain` (server wraps the string in
@@ -248,83 +263,140 @@ MessagePack automatically).
 ### C++ SDK (devices)
 
 Zero-malloc C++ client for ESP32 / Particle Photon 2 / Arduino. All
-methods return `int` (HTTP status code; check `result == 200`). One-line
-publish for raw strings; the server wraps them in MessagePack
-automatically.
+methods return `int` (HTTP status code; check `result == 200`).
 
 ```cpp
 IoTClient iot(wifiClient, "host", 8153, "client-id", "hex-secret");
 int status = iot.publishQueue("device/status", "heartbeat");
 ```
 
-Full API + the wire-format details every client must implement (HMAC
-signing, response verification, msgpack value shapes, encrypted-value
-ext family, etc.) are in
-[**`docs/client_spec.md`**](docs/client_spec.md) — required reading
-before writing a fourth client.
+The wire-format details every client must implement (HMAC signing,
+response verification, msgpack value shapes, the encrypted-value
+ext family) are in [**`docs/client_spec.md`**](docs/client_spec.md) —
+required reading before writing another client.
 
 ### Python CLI (`stra2us`)
 
-`tools/stra2us_cli` — a Python client for testing, scripting, and
-catalog publishing. Lives at `tools/` and self-installs via
-`pip install -e tools/`. Supports publish/consume, KV read/write,
-catalog publish, and ad-hoc HMAC-signed requests against any stra2us
-instance.
+`tools/stra2us_cli` — a Python client (3.10+) for testing, scripting,
+and catalog publishing. Self-installs via `pip install -e tools/`.
+Verbs include `get` / `put` / `set` / `del` (KV), `show`, `catalog`
+(list/lint/publish/fetch), and `synth-traffic` (synthetic device load
+for warming up staging). Credentials come from `--server` /
+`--client-id` / `--secret`, a `--profile` in `.stra2us`, or the
+`STRA2US_*` env vars.
 
 ```sh
-stra2us --url https://stra2us.austindavid.com --client-id <id> \
-    --secret <hex> publish sensors/temp '{"c": 22.4}'
+stra2us --server https://iot.stra2us.austindavid.com:8153 \
+    --client-id <id> --secret <hex> get sensors/temp
 ```
 
-See [**`tools/README.md`**](tools/README.md) for full subcommand
-reference and examples.
+See [**`tools/README.md`**](tools/README.md) for the full subcommand
+reference.
 
 ---
 
 ## Backup & Restore
 
-Client credentials (IDs, HMAC secrets, ACLs) can be exported and
-re-imported via the Admin Dashboard under **Backup / Restore**, or
-directly via the API:
+Whole-instance and per-app dump/restore of all load-bearing state —
+clients + ACLs, admin users, KV (including catalogs + assets), queues,
+and the device→app reverse index. Available from the admin dashboard
+under **Backup / Restore**, or via the API (superuser-gated):
 
 ```bash
-# Download backup
-curl -u admin:password http://localhost:8000/api/admin/keys/backup \
-    -o backup.json
+# Whole-instance dump (add ?include_logs=1 to include the activity log)
+curl -H "Cookie: admin_session=..." \
+    https://stra2us.austindavid.com/api/admin/backup -o dump.json
 
-# Restore (skips existing clients)
-curl -u admin:password -X POST \
-    http://localhost:8000/api/admin/keys/restore \
-    -H 'Content-Type: application/json' -d @backup.json
+# Per-app dump
+curl -H "Cookie: admin_session=..." \
+    https://stra2us.austindavid.com/api/admin/backup/app/<app> -o app.json
 
-# Restore and overwrite existing clients
-curl -u admin:password -X POST \
-    "http://localhost:8000/api/admin/keys/restore?force=true" \
-    -H 'Content-Type: application/json' -d @backup.json
+# Restore (skip-existing by default; ?force_overwrite=1 to replace)
+curl -X POST -H 'Content-Type: application/json' \
+    https://stra2us.austindavid.com/api/admin/restore -d @dump.json
 ```
 
-> ⚠️ Backup files contain raw HMAC secrets. Treat them like a
-> password manager export — never commit to version control.
+The dump is a versioned JSON envelope (base64-msgpack for binary
+values); per-app restore is sandboxed to its app namespace as
+defense-in-depth. Full schema:
+[`docs/fr_backup_envelope_v1.md`](docs/fr_backup_envelope_v1.md). The
+legacy `GET/POST /api/admin/keys/{backup,restore}` (client credentials
+only) remain for scripts that target them.
+
+> ⚠️ Dumps contain raw HMAC secrets and admin ACLs. Treat them like a
+> password-manager export — never commit to version control. Responses
+> carry `X-Stra2us-Sensitive: true` + `Cache-Control: no-store`.
+
+---
+
+## Security
+
+Auth is HMAC-SHA256 (devices) and Google OAuth / htpasswd-rescue
+(admins), with a Redis-backed prefix ACL model. The browser surface is
+hardened with an enforcing CSP, output escaping, `Secure` +
+`SameSite=Lax` session cookies, and a CSRF Origin guard on
+state-changing admin requests. A 2026-05 security review and its
+remediations (rescue-credential hardening, cookie/CSRF, the
+encrypted-values nonce fix, CORS pinning) are recorded in
+[**`docs/security_audit_2026-05.md`**](docs/security_audit_2026-05.md),
+which also lists the affirmatively-sound surfaces and the open/
+deferred items. Application traffic is not encrypted at the app layer
+— confidentiality relies on HTTPS / the Cloudflare tunnel.
 
 ---
 
 ## Changelog
 
+### 2026-05-30 — Security hardening pass
+
+Four findings from a structured review, remediated: rescue-credential
+documentation, admin cookie flags + CSRF Origin guard, a per-client
+nonce for the encrypted-values cipher (closes a same-second
+two-time-pad leak; server-only, no client changes), and CORS origin
+pinning. Details + the "verified sound" list:
+[`docs/security_audit_2026-05.md`](docs/security_audit_2026-05.md).
+
+### 2026-05-14 — v1.8.1: Backup / restore (whole-instance + per-app)
+
+Versioned dump/restore of all load-bearing state, whole-instance and
+per-app, with an admin-UI download/restore surface and a documented
+envelope format. Per-app restore is namespace-sandboxed.
+[`docs/fr_backup_envelope_v1.md`](docs/fr_backup_envelope_v1.md).
+
+### 2026-05-14 — v1.7.2: Device-flow tooling
+
+`stra2us synth-traffic` synthetic-load CLI, and a beefier smoke test
+that exercises the HMAC-signed device protocol end-to-end
+(`tools/smoke_test_device.sh`, `tools/stage smoke-device`).
+
+### 2026-05-13 — v1.7.1: Polish + plumbing
+
+Generalized `widget: radio` to any enum-backed field; auto-write
+`backend/VERSION` from `tools/stage`; gated the `/app/` landing form
+behind OAuth; scoped admins can see Activity Logs for clients in their
+ACL.
+
+### 2026-05-13 — v1.7.0: Cycle boundary + version badge
+
+Boundary marker wrapping the v1.6.x catalog-app-ui cycle. New:
+running-release tag in the admin sidebar (`GET /api/admin/release`,
+sourced from `backend/VERSION`). Architectural shifts since v1.6.0
+(encrypted-field render simplification, catalog-as-contract, cache-bust
+automation) are summarized in [`CHANGELOG.md`](CHANGELOG.md).
+
 ### 2026-05-06 — v1.5: OAuth, hostname-aware auth, staging environment
 
-OAuth (Google) auth on the browser hostname; htpasswd retained as
-the rescue path on the device hostname. New `tools/stage` helper
-wraps the dev → staging → prod flow with smoke gates at every
-checkpoint. Bootstrap-default `rescue` user with soft warning + UI
-banner until the operator overrides. Implementation history,
-phase-by-phase rationale, and the rules of operation that produced
-this iteration: [`docs/fr_v15_incremental.md`](docs/fr_v15_incremental.md).
+OAuth (Google) auth on the browser hostname; htpasswd retained as the
+rescue path on the device hostname. New `tools/stage` helper wraps the
+dev → staging → prod flow with smoke gates at every checkpoint.
+[`docs/fr_v15_incremental.md`](docs/fr_v15_incremental.md).
 
 ### 2026-04-13 — Admin UI cleanup + Activity Log overhaul
 
-UI hardening (CSS fixes, XSS-safe rendering of dynamic content),
-modal close-button null-guard. Activity log migrated from Redis
-LIST → STREAM with 24h time-based retention + 150k count-based
-safety cap. Per-client filter chips above the log table.
+UI hardening (CSS fixes, XSS-safe rendering), modal close-button
+null-guard. Activity log migrated from Redis LIST → STREAM with 24h
+retention + 150k count cap. Per-client filter chips above the log
+table.
 
-For older entries, `git log --oneline` and the FR docs in `docs/`.
+For the full per-release detail, see [`CHANGELOG.md`](CHANGELOG.md),
+the `docs/` FR write-ups, and `git log v<X.Y.Z>`.
